@@ -1,0 +1,15 @@
+# Python related
+__pycache__/
+*.pyc
+
+# PixivVault User Data (DO NOT UPLOAD)
+cookies.txt
+pixiv_vault.db
+Images/
+PixivVault_Backup_*.zip
+*.tmp
+
+# Build Artifacts
+build/
+dist/
+*.spec
