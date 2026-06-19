@@ -20,10 +20,14 @@ class Database:
                     is_deleted BOOLEAN DEFAULT 0
                 )
             """)
+            try:
+                self.conn.execute("ALTER TABLE works ADD COLUMN user_id TEXT")
+            except sqlite3.OperationalError:
+                pass
 
-    def get_all_work_ids(self):
-        """DBに保存されているすべての作品IDを取得します"""
-        cursor = self.conn.execute("SELECT work_id FROM works")
+    def get_user_work_ids(self, user_id):
+        """指定したユーザーの作品IDを取得します"""
+        cursor = self.conn.execute("SELECT work_id FROM works WHERE user_id = ?", (user_id,))
         return {row['work_id'] for row in cursor.fetchall()}
 
     def get_work(self, work_id):
@@ -36,18 +40,19 @@ class Database:
         with self.conn:
             self.conn.execute("UPDATE works SET is_deleted = 1 WHERE work_id = ?", (work_id,))
 
-    def upsert_work(self, work_id, title, page_count, create_date, update_date):
+    def upsert_work(self, work_id, user_id, title, page_count, create_date, update_date):
         """作品情報を新規登録、または更新します"""
         now = datetime.now().isoformat()
         with self.conn:
             self.conn.execute("""
-                INSERT INTO works (work_id, title, page_count, create_date, update_date, last_backup, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, 0)
+                INSERT INTO works (work_id, user_id, title, page_count, create_date, update_date, last_backup, is_deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT(work_id) DO UPDATE SET
+                    user_id = excluded.user_id,
                     title = excluded.title,
                     page_count = excluded.page_count,
                     create_date = excluded.create_date,
                     update_date = excluded.update_date,
                     last_backup = excluded.last_backup,
                     is_deleted = 0
-            """, (work_id, title, page_count, create_date, update_date, now))
+            """, (work_id, user_id, title, page_count, create_date, update_date, now))

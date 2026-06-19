@@ -59,7 +59,7 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
     check_state()
     # 【フェーズB】削除検知
     log("【フェーズB】DBと比較し、Pixivから削除された作品がないか検知します。")
-    db_work_ids = db.get_all_work_ids()
+    db_work_ids = db.get_user_work_ids(user_id)
     deleted_ids = db_work_ids - current_work_ids
     
     for d_id in deleted_ids:
@@ -99,6 +99,9 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
             elif db_record['update_date'] != update_date:
                 log(f"[{idx}/{total}] 更新された作品を発見！ ID: {work_id} 「{title}」")
                 needs_download = True
+            elif db_record['is_deleted']:
+                log(f"[{idx}/{total}] 削除状態から復帰した作品を発見！ ID: {work_id} 「{title}」")
+                needs_download = True
             else:
                 continue
             
@@ -136,7 +139,7 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
                         log(f"画像の保存に成功しました: {filename}", "DEBUG")
                 
                 # 全ページの確認・ダウンロードが成功したらDBを更新 (upsert_work内部でcommitされる)
-                db.upsert_work(work_id, title, page_count, create_date, update_date)
+                db.upsert_work(work_id, user_id, title, page_count, create_date, update_date)
                 
             except Exception as e:
                 if stop_event and stop_event.is_set():
