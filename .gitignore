@@ -6,7 +6,7 @@ __pycache__/
 cookies.txt
 pixiv_vault.db
 Images/
-PixivVault_Backup_*.zip
+*.zip
 *.tmp
 
 # Build Artifacts
