@@ -4,12 +4,38 @@ import json
 import shutil
 import logging
 import time
+import zipfile
 from datetime import datetime
 from database import Database
 from pixiv_client import PixivClient
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', '_', name)
+
+def append_to_zip(author_dir: str, zip_path: str, log_callback=None):
+    """ディレクトリ内のファイルをZIPファイルの末尾に追加し、追加した元ファイルを削除します"""
+    if not os.path.exists(author_dir):
+        return
+        
+    try:
+        if log_callback:
+            log_callback(f"Zipファイルに追加しています: {os.path.basename(zip_path)}", "INFO")
+        
+        # 'a' (Append) モードでZIPを開く。ファイルが無い場合は自動作成される。
+        with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(author_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, author_dir)
+                    zipf.write(file_path, arcname)
+                    
+        # ZIP追加が成功したら元フォルダを削除
+        shutil.rmtree(author_dir)
+        if log_callback:
+            log_callback(f"Zip化が完了し、一時フォルダを削除しました。", "INFO")
+    except Exception as e:
+        if log_callback:
+            log_callback(f"Zip化に失敗しました: {e}", "ERROR")
 
 def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = False, log_callback=None, progress_callback=None, alert_callback=None, stop_event=None, pause_event=None):
     logger = logging.getLogger(__name__)
@@ -75,10 +101,13 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
     base_img_dir = db.get_setting("save_path", "Images")
     total = len(current_works)
     
+    start_time = time.perf_counter()
+    
     for idx, work in enumerate(current_works, 1):
         check_state()
         if progress_callback:
-            progress_callback(idx, total)
+            elapsed = time.perf_counter() - start_time
+            progress_callback(idx, total, elapsed)
             
         work_id = str(work['id'])
         title = work.get('title', '無題')
@@ -148,6 +177,24 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
                 log(f"作品ID: {work_id} の処理中にエラーが発生しました: {e}", "ERROR")
                 continue
 
+    # 【フェーズD】ダウンロード完了後のZip化判定と実行
+    zip_all = db.get_setting("zip_all_after_download", "0") == "1"
+    is_zipped = False
+    cursor = db.conn.execute("SELECT is_zipped FROM following_users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if row and row['is_zipped']:
+        is_zipped = True
+
+    if zip_all or is_zipped:
+        # DBなどからuserNameが取得できている場合は使う。そうでなければ user_id。
+        # ここではループ内の最後の work から user_name を拾うか、取得済みの author_dir_name があれば使う。
+        if 'author_dir_name' in locals():
+            zip_target_dir = os.path.join(base_img_dir, author_dir_name)
+            zip_target_path = os.path.join(base_img_dir, f"{author_dir_name}.zip")
+            if os.path.exists(zip_target_dir):
+                log(f"Zip圧縮（追記）を実行します: {zip_target_path}")
+                append_to_zip(zip_target_dir, zip_target_path, log_callback=log)
+
 def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_full: bool = False, 
                      log_callback=None, progress_callback=None, alert_callback=None, 
                      stop_event=None, pause_event=None, batch_progress_callback=None):
@@ -173,10 +220,12 @@ def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_
             log("一括処理を再開します。")
 
     total_users = len(user_ids)
+    batch_start_time = time.perf_counter()
     for idx, user_id in enumerate(user_ids, 1):
         check_state()
         if batch_progress_callback:
-            batch_progress_callback(idx, total_users, user_id)
+            elapsed = time.perf_counter() - batch_start_time
+            batch_progress_callback(idx, total_users, user_id, elapsed)
             
         log(f"--- [{idx}/{total_users}] ユーザーID: {user_id} の処理を開始します ---")
         try:

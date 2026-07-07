@@ -31,9 +31,14 @@ class Database:
                     name TEXT,
                     account TEXT,
                     profile_img TEXT,
-                    last_downloaded TEXT
+                    last_downloaded TEXT,
+                    is_zipped BOOLEAN DEFAULT 0
                 )
             """)
+            try:
+                self.conn.execute("ALTER TABLE following_users ADD COLUMN is_zipped BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -116,3 +121,8 @@ class Database:
                 VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """, (key, str(value)))
+
+    def set_zipped(self, user_id, is_zipped):
+        """特定のユーザーのZip圧縮対象状態を更新します"""
+        with self.conn:
+            self.conn.execute("UPDATE following_users SET is_zipped = ? WHERE user_id = ?", (int(is_zipped), user_id))

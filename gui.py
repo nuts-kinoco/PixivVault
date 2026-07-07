@@ -51,10 +51,39 @@ def main_window(page: ft.Page):
 
     progress_bar  = ft.ProgressBar(width=400, value=0, visible=False)
     progress_text = ft.Text("0 / 0", visible=False)
+    remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)
 
-    def handle_progress(current: int, total: int):
+    progress_history = []
+
+    def handle_progress(current: int, total: int, elapsed_sec: float = 0):
         progress_bar.value = current / total if total > 0 else 0
         progress_text.value = f"{current} / {total}"
+        
+        if elapsed_sec > 0 and current < total:
+            progress_history.append((current, elapsed_sec))
+            if len(progress_history) > 10:
+                progress_history.pop(0)
+                
+            if len(progress_history) >= 2:
+                items_done = progress_history[-1][0] - progress_history[0][0]
+                time_taken = progress_history[-1][1] - progress_history[0][1]
+                if time_taken > 0 and items_done > 0:
+                    speed = items_done / time_taken
+                    remaining_items = total - current
+                    eta_sec = remaining_items / speed
+                    mins, secs = divmod(int(eta_sec), 60)
+                    if mins > 0:
+                        remaining_time_text.value = f"残り約{mins}分{secs}秒"
+                    else:
+                        remaining_time_text.value = f"残り約{secs}秒"
+                else:
+                    remaining_time_text.value = "残り時間計算中..."
+            else:
+                remaining_time_text.value = "残り時間計算中..."
+        elif current == total:
+            remaining_time_text.value = ""
+            progress_history.clear()
+            
         page.update()
 
     def set_ui_disabled_single(disabled: bool, is_running: bool = False):
@@ -103,13 +132,15 @@ def main_window(page: ft.Page):
         finally:
             progress_bar.visible = False
             progress_text.visible = False
+            remaining_time_text.value = ""
+            progress_history.clear()
             set_ui_disabled_single(False, is_running=False)
 
     run_btn.on_click = lambda _: threading.Thread(target=run_backup_thread, daemon=True).start()
 
     tab1_content = ft.Column([
         ft.Row([user_id_field, mode_dropdown, run_btn, pause_btn, stop_btn, export_btn], wrap=True),
-        ft.Row([progress_bar, progress_text]),
+        ft.Row([progress_bar, progress_text, remaining_time_text]),
     ])
 
     # --- タブ2: フォロー中一括ダウンロードUI ---
@@ -124,18 +155,38 @@ def main_window(page: ft.Page):
 
     batch_progress_bar  = ft.ProgressBar(width=400, value=0, visible=False)
     batch_progress_text = ft.Text("0 / 0", visible=False)
+    batch_remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)
 
     def load_follow_list_ui():
         follow_list_view.controls.clear()
         follow_checkboxes.clear()
         users = db.get_following_users()
+
+        def toggle_zip(e, uid):
+            btn = e.control
+            is_zipped = btn.icon == ft.Icons.ARCHIVE
+            new_val = not is_zipped
+            db.set_zipped(uid, new_val)
+            btn.icon = ft.Icons.ARCHIVE if new_val else ft.Icons.ARCHIVE_OUTLINED
+            btn.icon_color = ft.Colors.BLUE_400 if new_val else ft.Colors.GREY_500
+            page.update()
+
         for u in users:
             label = f"{u['name']} (@{u['account']}) - ID:{u['user_id']}"
             if u.get('last_downloaded'):
                 label += f" [最終: {u['last_downloaded'][:10]}]"
-            cb = ft.Checkbox(label=label, value=False)
+            cb = ft.Checkbox(label=label, value=False, expand=True)
             follow_checkboxes[u['user_id']] = cb
-            follow_list_view.controls.append(cb)
+            
+            is_zipped = u.get('is_zipped', 0)
+            zip_btn = ft.IconButton(
+                icon=ft.Icons.ARCHIVE if is_zipped else ft.Icons.ARCHIVE_OUTLINED,
+                icon_color=ft.Colors.BLUE_400 if is_zipped else ft.Colors.GREY_500,
+                tooltip="個別Zip化",
+                on_click=lambda e, uid=u['user_id']: toggle_zip(e, uid)
+            )
+            row = ft.Row([cb, zip_btn])
+            follow_list_view.controls.append(row)
         page.update()
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
@@ -151,9 +202,37 @@ def main_window(page: ft.Page):
             batch_pause_btn.icon = ft.Icons.PAUSE
         page.update()
 
-    def handle_batch_progress(idx: int, total: int, user_id: str):
+    batch_progress_history = []
+
+    def handle_batch_progress(idx: int, total: int, user_id: str, elapsed_sec: float = 0):
         batch_progress_bar.value  = idx / total if total > 0 else 0
         batch_progress_text.value = f"作者 {idx} / {total}"
+        
+        if elapsed_sec > 0 and idx < total:
+            batch_progress_history.append((idx, elapsed_sec))
+            if len(batch_progress_history) > 5:
+                batch_progress_history.pop(0)
+                
+            if len(batch_progress_history) >= 2:
+                items_done = batch_progress_history[-1][0] - batch_progress_history[0][0]
+                time_taken = batch_progress_history[-1][1] - batch_progress_history[0][1]
+                if time_taken > 0 and items_done > 0:
+                    speed = items_done / time_taken
+                    remaining_items = total - idx
+                    eta_sec = remaining_items / speed
+                    mins, secs = divmod(int(eta_sec), 60)
+                    if mins > 0:
+                        batch_remaining_time_text.value = f"残り約{mins}分{secs}秒"
+                    else:
+                        batch_remaining_time_text.value = f"残り約{secs}秒"
+                else:
+                    batch_remaining_time_text.value = "残り時間計算中..."
+            else:
+                batch_remaining_time_text.value = "残り時間計算中..."
+        elif idx == total:
+            batch_remaining_time_text.value = ""
+            batch_progress_history.clear()
+
         page.update()
 
     def run_batch_thread():
@@ -189,6 +268,8 @@ def main_window(page: ft.Page):
         finally:
             batch_progress_bar.visible  = False
             batch_progress_text.visible = False
+            batch_remaining_time_text.value = ""
+            batch_progress_history.clear()
             set_ui_disabled_batch(False, is_running=False)
             load_follow_list_ui()
 
@@ -212,7 +293,7 @@ def main_window(page: ft.Page):
 
     tab2_content = ft.Column([
         ft.Row([batch_run_btn, batch_pause_btn, batch_stop_btn, select_all_btn, deselect_all_btn], wrap=True),
-        ft.Row([batch_progress_bar, batch_progress_text]),
+        ft.Row([batch_progress_bar, batch_progress_text, batch_remaining_time_text]),
         ft.Container(
             content=follow_list_view, expand=True,
             border=ft.Border(
@@ -326,6 +407,20 @@ def main_window(page: ft.Page):
             sync_status_text.visible = True
         page.update()
 
+    def on_zip_all_change(e):
+        db.set_setting("zip_all_after_download", "1" if e.control.value else "0")
+
+    zip_all_checkbox = ft.Checkbox(
+        label="すべての作者に対しダウンロード完了後zipにする",
+        value=db.get_setting("zip_all_after_download", "0") == "1",
+        on_change=on_zip_all_change
+    )
+    
+    advanced_settings = ft.ExpansionTile(
+        title=ft.Text("Advanced / 高度な設定", weight=ft.FontWeight.BOLD),
+        controls=[zip_all_checkbox]
+    )
+
     settings_dialog = ft.AlertDialog(
         title=ft.Text("設定"),
         content=ft.Column([
@@ -347,6 +442,7 @@ def main_window(page: ft.Page):
                               on_click=lambda _: threading.Thread(target=_run_folder_picker, daemon=True).start()),
             save_path_text,
             ft.Divider(),
+            advanced_settings,
             ft.Row([
                 ft.Text("v2.0 build 260707", size=11, color=ft.Colors.GREY_600)
             ], alignment=ft.MainAxisAlignment.CENTER),
