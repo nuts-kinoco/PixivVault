@@ -3,6 +3,7 @@ import re
 import json
 import shutil
 import logging
+import time
 from datetime import datetime
 from database import Database
 from pixiv_client import PixivClient
@@ -71,7 +72,7 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
     check_state()
     # 【フェーズC】新規・更新分（または全件）ダウンロード
     log("【フェーズC】画像のダウンロードとDBの更新を行います。")
-    base_img_dir = "Images"
+    base_img_dir = db.get_setting("save_path", "Images")
     total = len(current_works)
     
     for idx, work in enumerate(current_works, 1):
@@ -146,6 +147,60 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
                     raise
                 log(f"作品ID: {work_id} の処理中にエラーが発生しました: {e}", "ERROR")
                 continue
+
+def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_full: bool = False, 
+                     log_callback=None, progress_callback=None, alert_callback=None, 
+                     stop_event=None, pause_event=None, batch_progress_callback=None):
+    logger = logging.getLogger(__name__)
+    
+    def log(msg, level="INFO"):
+        if level == "INFO":
+            logger.info(msg)
+        elif level == "ERROR":
+            logger.error(msg)
+        if log_callback:
+            log_callback(msg)
+            
+    def check_state():
+        if stop_event and stop_event.is_set():
+            raise Exception("一括処理がユーザーによって中止されました。")
+        if pause_event and pause_event.is_set():
+            log("一括処理を一時停止しています...")
+            while pause_event.is_set():
+                if stop_event and stop_event.is_set():
+                    raise Exception("一括処理がユーザーによって中止されました。")
+                pause_event.wait(timeout=1.0)
+            log("一括処理を再開します。")
+
+    total_users = len(user_ids)
+    for idx, user_id in enumerate(user_ids, 1):
+        check_state()
+        if batch_progress_callback:
+            batch_progress_callback(idx, total_users, user_id)
+            
+        log(f"--- [{idx}/{total_users}] ユーザーID: {user_id} の処理を開始します ---")
+        try:
+            run_backup(
+                user_id=user_id, client=client, db=db, is_full=is_full,
+                log_callback=log_callback, progress_callback=progress_callback,
+                alert_callback=alert_callback, stop_event=stop_event, pause_event=pause_event
+            )
+            # 完了したらDBに最終ダウンロード日時を記録
+            db.update_following_last_downloaded(user_id)
+            
+        except Exception as e:
+            if stop_event and stop_event.is_set():
+                raise
+            log(f"ユーザーID: {user_id} の処理中にエラーが発生しました: {e}", "ERROR")
+            
+        # 次のユーザーへ移行する前に3〜5秒スリープしてサーバー負荷を軽減
+        if idx < total_users:
+            check_state()
+            sleep_time = 3.0
+            log(f"サーバー負荷軽減のため {sleep_time} 秒待機します...")
+            time.sleep(sleep_time)
+            
+    log("一括ダウンロードがすべて完了しました！")
 
 def export_data(db: Database, log_callback=None):
     logger = logging.getLogger(__name__)

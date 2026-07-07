@@ -3,7 +3,7 @@ from datetime import datetime
 
 class Database:
     def __init__(self, db_path="pixiv_vault.db"):
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._create_table()
 
@@ -24,6 +24,23 @@ class Database:
                 self.conn.execute("ALTER TABLE works ADD COLUMN user_id TEXT")
             except sqlite3.OperationalError:
                 pass
+            
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS following_users (
+                    user_id TEXT PRIMARY KEY,
+                    name TEXT,
+                    account TEXT,
+                    profile_img TEXT,
+                    last_downloaded TEXT
+                )
+            """)
+            
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
 
     def get_user_work_ids(self, user_id):
         """指定したユーザーの作品IDを取得します"""
@@ -56,3 +73,46 @@ class Database:
                     last_backup = excluded.last_backup,
                     is_deleted = 0
             """, (work_id, user_id, title, page_count, create_date, update_date, now))
+
+    def save_following_users(self, users_list):
+        """フォローしているユーザー一覧をデータベースに保存/更新します"""
+        with self.conn:
+            for user in users_list:
+                self.conn.execute("""
+                    INSERT INTO following_users (user_id, name, account, profile_img, last_downloaded)
+                    VALUES (?, ?, ?, ?, (SELECT last_downloaded FROM following_users WHERE user_id = ?))
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        name = excluded.name,
+                        account = excluded.account,
+                        profile_img = excluded.profile_img
+                """, (user['user_id'], user['name'], user['account'], user['profile_img'], user['user_id']))
+
+    def get_following_users(self):
+        """保存されているフォローユーザー一覧を取得します"""
+        cursor = self.conn.execute("SELECT * FROM following_users")
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_following_last_downloaded(self, user_id):
+        """特定のフォローユーザーの最終ダウンロード日時を更新します"""
+        now = datetime.now().isoformat()
+        with self.conn:
+            self.conn.execute("""
+                UPDATE following_users 
+                SET last_downloaded = ? 
+                WHERE user_id = ?
+            """, (now, user_id))
+
+    def get_setting(self, key, default=None):
+        """設定値を取得します"""
+        cursor = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        return row['value'] if row else default
+
+    def set_setting(self, key, value):
+        """設定値を保存/更新します"""
+        with self.conn:
+            self.conn.execute("""
+                INSERT INTO settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (key, str(value)))

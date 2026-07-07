@@ -1,6 +1,7 @@
 import time
 import random
 import logging
+import re
 from typing import List, Dict, Any
 
 import requests
@@ -139,6 +140,69 @@ class PixivClient:
                     
         logger.info(f"全 {len(works_list)} 件の作品データを取得しました。")
         return works_list
+
+    def get_my_user_id(self) -> str:
+        """ログイン中の自分のユーザーIDを取得します。"""
+        url = "https://www.pixiv.net/"
+        response = self.session.get(url, timeout=10)
+        response.raise_for_status()
+        
+        # HTML内からuserIdを検索
+        match = re.search(r'"userId"\s*:\s*"(\d+)"', response.text)
+        if match:
+            return match.group(1)
+        
+        # 別のフォーマットの可能性（JSONやスクリプト内）
+        match_alt = re.search(r'pixiv\.context\.userId\s*=\s*"(\d+)"', response.text)
+        if match_alt:
+            return match_alt.group(1)
+            
+        raise Exception("ログイン中のユーザーIDが取得できませんでした。Cookieが有効か確認してください。")
+
+    def get_following_users(self, my_user_id: str, rest_type: str = "show", log_callback=None) -> List[Dict[str, Any]]:
+        """自分がフォローしているユーザー一覧を取得します。rest_type='show'（公開）または'hide'（非公開）"""
+        following_list = []
+        offset = 0
+        limit = 24
+        
+        def _log(msg):
+            logger.info(msg)
+            if log_callback:
+                log_callback(msg)
+        
+        _log(f"フォロー中のユーザー一覧（{rest_type}）の取得を開始します...")
+        
+        while True:
+            url = f"https://www.pixiv.net/ajax/user/{my_user_id}/following"
+            params = {
+                'offset': offset,
+                'limit': limit,
+                'rest': rest_type,
+                'lang': 'ja'
+            }
+            
+            data = self._request_with_retry(url, params=params)
+            body = data.get('body', {})
+            users = body.get('users', [])
+            
+            if not users:
+                break
+                
+            for user in users:
+                following_list.append({
+                    'user_id': str(user.get('userId')),
+                    'name': user.get('userName'),
+                    'account': user.get('userAccount'),
+                    'profile_img': user.get('profileImageUrl')
+                })
+                
+            _log(f"進捗: {len(following_list)} 人の作者情報を取得しました...")
+            offset += limit
+            
+            if len(users) < limit:
+                break
+                
+        return following_list
 
     def get_image_urls(self, work_id: str) -> List[str]:
         """作品IDからオリジナル画像のURLリストを取得します。"""
