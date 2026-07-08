@@ -178,7 +178,7 @@ def main_window(page: ft.Page):
         bgcolor=ft.Colors.BLUE_700,
         border_radius=10,
         padding=ft.padding.Padding(5, 2, 5, 2),
-        left=255,
+        left=210,
         top=5
     )
 
