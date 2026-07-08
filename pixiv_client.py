@@ -27,12 +27,13 @@ class PixivClient:
         
         if not os.path.exists(cookie_file):
             logger.error(f"「{cookie_file}」が見つかりません。")
-            raise Exception(
+            logger.warning(
                 "自動取得がWindowsのセキュリティにブロックされてしまうため、手動エクスポート方式に変更しました。\n"
                 "1. Chrome等のブラウザでPixivにログインします。\n"
                 "2. 拡張機能「Get cookies.txt LOCALLY」等を使ってCookieをエクスポートします。\n"
                 f"3. ダウンロードしたファイルを '{cookie_file}' という名前で、main.py と同じフォルダに配置してください。"
             )
+            return
             
         try:
             cj = http.cookiejar.MozillaCookieJar(cookie_file)

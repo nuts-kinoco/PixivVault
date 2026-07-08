@@ -11,6 +11,8 @@ from database import Database
 from core import run_backup, export_data, run_batch_backup
 import registry_helper
 
+gui_log_callback = [None]
+
 def main_window(page: ft.Page):
     page.title = "PixivVault"
     page.theme_mode = ft.ThemeMode.DARK
@@ -46,6 +48,8 @@ def main_window(page: ft.Page):
         append_log(msg)
     def handle_alert(msg: str):
         append_log(f"[!] {msg}", color=ft.Colors.RED_400)
+    
+    gui_log_callback[0] = handle_log
 
     login_status_text = ft.Text("ログインチェック中...", color=ft.Colors.BLUE_200, size=12)
 

@@ -88,11 +88,15 @@ class PixivVaultServer(HTTPServer):
             
         try:
             self.notify("PixivVault ダウンロード開始", f"ユーザーID: {user_id} のバックアップを開始します。")
-            # PixivVaultのログコールバック用
             def log_cb(msg):
                 logger.debug(f"[拡張機能連携] {msg}")
-                
-            run_backup(user_id=user_id, client=self.client, db=self.db, target_type="both", log_callback=log_cb)
+                from gui import gui_log_callback
+                if gui_log_callback[0]:
+                    gui_log_callback[0](msg)
+            
+            from pixiv_client import PixivClient
+            client = PixivClient()
+            run_backup(user_id=user_id, client=client, db=self.db, target_type="both", log_callback=log_cb)
             
             self.notify("PixivVault ダウンロード完了", f"ユーザーID: {user_id} のバックアップが完了しました！")
         except Exception as e:
@@ -112,8 +116,13 @@ class PixivVaultServer(HTTPServer):
             
             def log_cb(msg):
                 logger.debug(f"[拡張機能連携] {msg}")
-                
-            run_single_work_backup(work_id=work_id, is_novel=is_novel, client=self.client, db=self.db, log_callback=log_cb)
+                from gui import gui_log_callback
+                if gui_log_callback[0]:
+                    gui_log_callback[0](msg)
+            
+            from pixiv_client import PixivClient
+            client = PixivClient()
+            run_single_work_backup(work_id=work_id, is_novel=is_novel, client=client, db=self.db, log_callback=log_cb)
             
             self.notify("PixivVault ダウンロード完了", f"作品の保存が完了しました！")
         except Exception as e:
