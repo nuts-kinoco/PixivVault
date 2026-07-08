@@ -207,6 +207,44 @@ class PixivClient:
             'coverUrl': body.get('coverUrl', '')
         }
 
+    def get_work_info(self, work_id: str) -> dict:
+        """指定した作品IDの詳細情報を取得します。"""
+        url = f"https://www.pixiv.net/ajax/illust/{work_id}"
+        data = self._request_with_retry(url)
+        body = data.get('body', {})
+        if not body:
+            return None
+            
+        return {
+            'id': body.get('id'),
+            'title': body.get('title'),
+            'type': body.get('illustType', 0),
+            'user_name': body.get('userName', 'Unknown'),
+            'user_id': body.get('userId'),
+            'page_count': body.get('pageCount', 1),
+            'create_date': body.get('createDate', ''),
+            'update_date': body.get('updateDate', '')
+        }
+
+    def get_novel_info(self, novel_id: str) -> dict:
+        """指定した小説IDの詳細情報を取得します。"""
+        url = f"https://www.pixiv.net/ajax/novel/{novel_id}"
+        data = self._request_with_retry(url)
+        body = data.get('body', {})
+        if not body:
+            return None
+            
+        return {
+            'id': body.get('id'),
+            'title': body.get('title'),
+            'type': 'novel',
+            'user_name': body.get('userName', 'Unknown'),
+            'user_id': body.get('userId'),
+            'text_count': body.get('textCount', 0),
+            'create_date': body.get('createDate', ''),
+            'update_date': body.get('updateDate', '')
+        }
+
     def get_my_user_id(self) -> str:
         """ログイン中の自分のユーザーIDを取得します。"""
         url = "https://www.pixiv.net/"

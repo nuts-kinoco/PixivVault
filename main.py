@@ -11,6 +11,15 @@ def main():
     # スケジューラの初期化と開始
     scheduler = Scheduler(db, log_callback=None)
     scheduler.start()
+    
+    # 拡張機能連携用ローカルサーバーの起動
+    from pixiv_client import PixivClient
+    from server import start_server
+    import threading
+    
+    client = PixivClient()
+    server_thread = threading.Thread(target=start_server, args=(25010, db, client), daemon=True)
+    server_thread.start()
 
     def app_target(page: ft.Page):
         # メインUIの構築
