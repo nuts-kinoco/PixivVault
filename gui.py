@@ -222,7 +222,7 @@ def main_window(page: ft.Page):
             page.update()
 
         for u in users:
-            label = f"{u['name']} (@{u['account']}) - ID:{u['user_id']}"
+            label = f"{u['name']} (ID:{u['user_id']})"
             if u.get('last_downloaded'):
                 label += f" [最終: {u['last_downloaded'][:10]}]"
                 
@@ -233,12 +233,17 @@ def main_window(page: ft.Page):
                 cb_ref.value = not cb_ref.value
                 page.update()
                 
-            label_text = ft.Text(label, expand=True)
+            gd_content = ft.Container(
+                content=ft.Text(label),
+                padding=ft.padding.symmetric(vertical=8, horizontal=5),
+                alignment=ft.alignment.center_left,
+            )
             gd = ft.GestureDetector(
-                content=label_text,
+                content=gd_content,
                 on_tap=on_label_tap,
                 on_double_tap=toggle_list_expansion,
-                mouse_cursor=ft.MouseCursor.CLICK
+                mouse_cursor=ft.MouseCursor.CLICK,
+                expand=True
             )
             
             is_zipped = u.get('is_zipped', 0)
