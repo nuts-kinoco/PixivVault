@@ -236,7 +236,7 @@ def main_window(page: ft.Page):
             gd_content = ft.Container(
                 content=ft.Text(label),
                 padding=10,
-                alignment=ft.alignment.center_left,
+                alignment=ft.alignment.Alignment.CENTER_LEFT,
             )
             gd = ft.GestureDetector(
                 content=gd_content,
