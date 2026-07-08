@@ -178,8 +178,8 @@ def main_window(page: ft.Page):
         bgcolor=ft.Colors.BLUE_700,
         border_radius=10,
         padding=ft.padding.Padding(5, 2, 5, 2),
-        right=0,
-        top=2
+        left=255,
+        top=5
     )
 
     batch_target_type_dropdown = ft.Dropdown(
