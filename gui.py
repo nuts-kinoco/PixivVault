@@ -691,12 +691,11 @@ def main_window(page: ft.Page):
             padding=10,
             border_radius=8
         ),
-        ft.Container(height=10),
         ft.Row([
             ft.ElevatedButton("自動起動を有効化", icon=ft.Icons.CHECK, color=ft.Colors.WHITE, bgcolor=ft.Colors.BLUE_600, on_click=on_register_ext),
             ft.OutlinedButton("自動起動を無効化", icon=ft.Icons.CLOSE, on_click=on_unregister_ext),
         ]),
-    ], scroll=ft.ScrollMode.AUTO)
+    ], spacing=10)
     
     # 初期状態チェック
     update_ext_status()
@@ -704,7 +703,7 @@ def main_window(page: ft.Page):
     # --- タブ切り替え ---
     tab1_container = ft.Container(content=tab1_content, padding=10, visible=True)
     tab2_container = ft.Container(content=tab2_content, padding=10, visible=False, expand=True)
-    tab_extension_container = ft.Container(content=tab_extension_content, padding=10, visible=False, expand=True)
+    tab_extension_container = ft.Container(content=tab_extension_content, padding=10, visible=False)
 
     last_selected_tab_idx = [0]
     
