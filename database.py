@@ -45,6 +45,11 @@ class Database:
             except sqlite3.OperationalError:
                 pass
             
+            try:
+                self.conn.execute("ALTER TABLE following_users ADD COLUMN is_favorite BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -132,3 +137,13 @@ class Database:
         """特定のユーザーのZip圧縮対象状態を更新します"""
         with self.conn:
             self.conn.execute("UPDATE following_users SET is_zipped = ? WHERE user_id = ?", (int(is_zipped), user_id))
+
+    def set_favorite(self, user_id, is_favorite):
+        """特定のユーザーをお気に入り状態を更新します"""
+        with self.conn:
+            self.conn.execute("UPDATE following_users SET is_favorite = ? WHERE user_id = ?", (int(is_favorite), user_id))
+
+    def get_favorite_users(self):
+        """お気に入りに設定されているユーザー一覧を取得します"""
+        cursor = self.conn.execute("SELECT * FROM following_users WHERE is_favorite = 1")
+        return [dict(row) for row in cursor.fetchall()]

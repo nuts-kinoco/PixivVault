@@ -1,0 +1,3 @@
+pystray
+win11toast
+schedule

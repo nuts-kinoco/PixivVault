@@ -214,6 +214,7 @@ def main_window(page: ft.Page):
     batch_stop_btn   = ft.ElevatedButton("停止", icon=ft.Icons.STOP, disabled=True)
     select_all_btn   = ft.TextButton("すべて選択")
     deselect_all_btn = ft.TextButton("選択解除")
+    select_favorite_btn = ft.TextButton("お気に入りのみ選択")
 
     batch_progress_bar  = ft.ProgressBar(width=400, value=0, visible=False)
     batch_progress_text = ft.Text("0 / 0", visible=False)
@@ -243,6 +244,15 @@ def main_window(page: ft.Page):
             db.set_zipped(uid, new_val)
             btn.icon = ft.Icons.ARCHIVE if new_val else ft.Icons.ARCHIVE_OUTLINED
             btn.icon_color = ft.Colors.BLUE_400 if new_val else ft.Colors.GREY_500
+            page.update()
+
+        def toggle_favorite(e, uid):
+            btn = e.control
+            is_fav = btn.icon == ft.Icons.STAR
+            new_val = not is_fav
+            db.set_favorite(uid, new_val)
+            btn.icon = ft.Icons.STAR if new_val else ft.Icons.STAR_BORDER
+            btn.icon_color = ft.Colors.YELLOW_600 if new_val else ft.Colors.GREY_500
             page.update()
 
         for u in users:
@@ -277,7 +287,16 @@ def main_window(page: ft.Page):
                 tooltip="個別Zip化",
                 on_click=lambda e, uid=u['user_id']: toggle_zip(e, uid)
             )
-            row = ft.Row([cb, gd, zip_btn])
+
+            is_favorite = u.get('is_favorite', 0)
+            fav_btn = ft.IconButton(
+                icon=ft.Icons.STAR if is_favorite else ft.Icons.STAR_BORDER,
+                icon_color=ft.Colors.YELLOW_600 if is_favorite else ft.Colors.GREY_500,
+                tooltip="お気に入り (新着自動チェック)",
+                on_click=lambda e, uid=u['user_id']: toggle_favorite(e, uid)
+            )
+            
+            row = ft.Row([cb, fav_btn, gd, zip_btn])
             follow_list_view.controls.append(row)
         page.update()
         
@@ -289,6 +308,7 @@ def main_window(page: ft.Page):
         batch_target_type_dropdown.disabled = disabled
         select_all_btn.disabled   = disabled
         deselect_all_btn.disabled = disabled
+        select_favorite_btn.disabled = disabled
         for cb in follow_checkboxes.values():
             cb.disabled = disabled
         batch_pause_btn.disabled = not is_running
@@ -387,10 +407,18 @@ def main_window(page: ft.Page):
     batch_stop_btn.on_click  = lambda _: stop_event.set()
     select_all_btn.on_click   = lambda _: [setattr(cb, 'value', True) for cb in follow_checkboxes.values()] or page.update()
     deselect_all_btn.on_click = lambda _: [setattr(cb, 'value', False) for cb in follow_checkboxes.values()] or page.update()
+    
+    def on_select_favorite(e):
+        favs = [str(u['user_id']) for u in db.get_favorite_users()]
+        for uid, cb in follow_checkboxes.items():
+            cb.value = str(uid) in favs
+        page.update()
+    select_favorite_btn.on_click = on_select_favorite
 
     batch_actions_row = ft.Row([
         select_all_btn,
         deselect_all_btn,
+        select_favorite_btn,
         ft.VerticalDivider(),
         batch_target_type_dropdown,
         sort_dropdown,
@@ -539,6 +567,37 @@ def main_window(page: ft.Page):
         width=300
     )
     novel_format_dropdown.on_change = on_novel_format_change
+
+    def on_auto_check_interval_change(e):
+        db.set_setting("auto_check_interval_hours", e.control.value)
+
+    auto_check_dropdown = ft.Dropdown(
+        label="☆ お気に入り自動チェック間隔",
+        options=[
+            ft.DropdownOption("6", "6時間ごと"),
+            ft.DropdownOption("12", "12時間ごと"),
+            ft.DropdownOption("24", "24時間ごと (1日)"),
+            ft.DropdownOption("48", "48時間ごと (2日)"),
+            ft.DropdownOption("0", "自動チェックしない"),
+        ],
+        value=db.get_setting("auto_check_interval_hours", "24"),
+        width=300
+    )
+    auto_check_dropdown.on_change = on_auto_check_interval_change
+
+    def on_enable_notifications_change(e):
+        db.set_setting("enable_notifications", "1" if e.control.value == "1" else "0")
+
+    notifications_dropdown = ft.Dropdown(
+        label="新着通知のON/OFF",
+        options=[
+            ft.DropdownOption("1", "ON (通知する)"),
+            ft.DropdownOption("0", "OFF (通知しない)"),
+        ],
+        value=db.get_setting("enable_notifications", "1"),
+        width=300
+    )
+    notifications_dropdown.on_change = on_enable_notifications_change
     
     advanced_settings = ft.ExpansionTile(
         title=ft.Text("Advanced / 高度な設定", weight=ft.FontWeight.BOLD),
@@ -568,6 +627,8 @@ def main_window(page: ft.Page):
             ft.Divider(),
             ft.Text("4. その他の設定", weight=ft.FontWeight.BOLD),
             novel_format_dropdown,
+            auto_check_dropdown,
+            notifications_dropdown,
             advanced_settings,
             ft.Row([
                 ft.Text("v2.0 build 260707", size=11, color=ft.Colors.GREY_600)
@@ -587,19 +648,36 @@ def main_window(page: ft.Page):
     tab1_container = ft.Container(content=tab1_content, padding=10, visible=True)
     tab2_container = ft.Container(content=tab2_content, padding=10, visible=False, expand=True)
 
+    last_selected_tab_idx = [0]
+    
     def on_tab_change(e):
         idx = e.control.selected_index
+        if idx == 2:
+            # フォルダを開いて元のタブに戻す
+            import subprocess
+            folder_path = db.get_setting("save_path", "Images")
+            os.makedirs(folder_path, exist_ok=True)
+            try:
+                os.startfile(folder_path)
+            except AttributeError:
+                subprocess.Popen(['explorer', folder_path])
+            e.control.selected_index = last_selected_tab_idx[0]
+            page.update()
+            return
+
+        last_selected_tab_idx[0] = idx
         tab1_container.visible = (idx == 0)
         tab2_container.visible = (idx == 1)
         page.update()
 
     tabs = ft.Tabs(
-        length=2,
+        length=3,
         selected_index=0,
         on_change=on_tab_change,
         content=ft.TabBar(tabs=[
             ft.Tab(label="個別ダウンロード", icon=ft.Icons.PERSON),
             ft.Tab(label="フォロー中一括",   icon=ft.Icons.GROUP),
+            ft.Tab(label="保存フォルダを開く", icon=ft.Icons.FOLDER_OPEN),
         ]),
         expand=False
     )
