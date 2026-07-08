@@ -101,8 +101,10 @@ function injectNovelButton() {
 // 3. フォロー中一覧ページ等のユーザーカード
 // ==========================================
 function injectUserButtons() {
-    // ユーザーを表すリンクを探す。 href="/users/12345" が対象
-    const userLinks = document.querySelectorAll('a[href^="/users/"]:not(.pv-processed)');
+    const userLinks = document.querySelectorAll('a[href^="/users/"]');
+    
+    // 現在のページで処理済みのuserIdを記録
+    const processedUsers = new Set();
     
     userLinks.forEach(link => {
         const href = link.getAttribute('href');
@@ -110,18 +112,31 @@ function injectUserButtons() {
         if (!match) return;
         
         const userId = match[1];
-        link.classList.add('pv-processed');
         
-        // ユーザー名やアイコンの親要素にボタンを追加する
-        // ユーザーカードの構造に依存するため、とりあえずリンクの隣に配置
-        const parent = link.parentElement;
+        // 1ユーザーにつき1回だけ処理 (最初に見つかるリンク＝アイコン画像を想定)
+        if (processedUsers.has(userId)) return;
+        processedUsers.add(userId);
+        
+        const btnId = `pv-user-${userId}`;
+        if (document.getElementById(btnId)) return;
         
         const btn = createVaultButton("差分DL", (btnEl) => {
             sendDownloadRequest({ type: "user", user_id: userId }, btnEl);
         });
+        btn.id = btnId;
         btn.classList.add("pv-small-btn");
+        // アイコンの左に配置するためのスタイル調整
+        btn.style.marginRight = "16px";
+        btn.style.marginLeft = "0";
+        btn.style.flexShrink = "0";
         
-        parent.appendChild(btn);
+        const parent = link.parentElement;
+        if (parent) {
+            parent.insertBefore(btn, link);
+            // 親要素をフレックスボックスにして横並びを整える
+            parent.style.display = 'flex';
+            parent.style.alignItems = 'center';
+        }
     });
 }
 
