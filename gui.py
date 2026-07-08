@@ -305,9 +305,9 @@ def main_window(page: ft.Page):
                 on_click=lambda e, uid=u['user_id']: toggle_favorite(e, uid)
             )
             
-            row = ft.Row([cb, fav_btn, gd, zip_btn])
+            row = ft.Row([cb, fav_btn, gd, zip_btn], key=str(u['user_id']))
             follow_list_view.controls.append(row)
-        
+
         # 明示的にListViewとページを更新
         follow_list_view.update()
         page.update()
