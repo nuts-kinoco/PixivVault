@@ -192,16 +192,7 @@ def main_window(page: ft.Page):
         value="both"
     )
     
-    sort_dropdown = ft.Dropdown(
-        label="ソート", width=140,
-        options=[
-            ft.DropdownOption(key="default", text="同期順"),
-            ft.DropdownOption(key="name_asc", text="名前 (昇順)"),
-            ft.DropdownOption(key="name_desc", text="名前 (降順)"),
-        ],
-        value="default"
-    )
-    
+
     search_field = ft.TextField(
         label="名前・IDで検索",
         width=160,
@@ -220,7 +211,7 @@ def main_window(page: ft.Page):
     batch_progress_text = ft.Text("0 / 0", visible=False)
     batch_remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)
 
-    def load_follow_list_ui(sort_val_override=None, search_val_override=None):
+    def load_follow_list_ui(search_val_override=None):
         # 現在のチェックボックスの選択状態を退避
         saved_states = {uid: cb.value for uid, cb in follow_checkboxes.items()}
         
@@ -236,14 +227,7 @@ def main_window(page: ft.Page):
         
         follow_count_text.value = str(len(users))
         
-        # ソート値: 引数優先、なければドロップダウンから取得
-        sort_val = sort_val_override if sort_val_override is not None else sort_dropdown.value
-        append_log(f"[システム] リスト更新: ソート={sort_val}, 検索='{search_q}', 件数={len(users)}")
-        
-        if sort_val == "name_asc":
-            users.sort(key=lambda u: (u.get('name') or '').lower())
-        elif sort_val == "name_desc":
-            users.sort(key=lambda u: (u.get('name') or '').lower(), reverse=True)
+        append_log(f"[システム] リスト更新: 検索='{search_q}', 件数={len(users)}")
 
         def toggle_zip(e, uid):
             btn = e.control
@@ -312,7 +296,6 @@ def main_window(page: ft.Page):
         follow_list_view.update()
         page.update()
         
-    sort_dropdown.on_change = lambda e: load_follow_list_ui(sort_val_override=e.control.value)
     search_field.on_change  = lambda e: load_follow_list_ui(search_val_override=e.control.value)
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
@@ -433,7 +416,6 @@ def main_window(page: ft.Page):
         select_favorite_btn,
         ft.VerticalDivider(),
         batch_target_type_dropdown,
-        sort_dropdown,
         search_field,
         batch_run_btn,
         batch_pause_btn,
