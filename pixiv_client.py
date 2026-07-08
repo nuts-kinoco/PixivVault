@@ -263,9 +263,6 @@ class PixivClient:
                 
             _log(f"進捗: {len(following_list)} 人の作者情報を取得しました...")
             offset += limit
-            
-            if len(users) < limit:
-                break
                 
         return following_list
 
