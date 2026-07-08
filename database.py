@@ -25,6 +25,11 @@ class Database:
             except sqlite3.OperationalError:
                 pass
             
+            try:
+                self.conn.execute("ALTER TABLE works ADD COLUMN content_type TEXT DEFAULT 'illust'")
+            except sqlite3.OperationalError:
+                pass
+
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS following_users (
                     user_id TEXT PRIMARY KEY,
@@ -62,13 +67,13 @@ class Database:
         with self.conn:
             self.conn.execute("UPDATE works SET is_deleted = 1 WHERE work_id = ?", (work_id,))
 
-    def upsert_work(self, work_id, user_id, title, page_count, create_date, update_date):
+    def upsert_work(self, work_id, user_id, title, page_count, create_date, update_date, content_type='illust'):
         """作品情報を新規登録、または更新します"""
         now = datetime.now().isoformat()
         with self.conn:
             self.conn.execute("""
-                INSERT INTO works (work_id, user_id, title, page_count, create_date, update_date, last_backup, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                INSERT INTO works (work_id, user_id, title, page_count, create_date, update_date, last_backup, is_deleted, content_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ON CONFLICT(work_id) DO UPDATE SET
                     user_id = excluded.user_id,
                     title = excluded.title,
@@ -76,8 +81,9 @@ class Database:
                     create_date = excluded.create_date,
                     update_date = excluded.update_date,
                     last_backup = excluded.last_backup,
-                    is_deleted = 0
-            """, (work_id, user_id, title, page_count, create_date, update_date, now))
+                    is_deleted = 0,
+                    content_type = excluded.content_type
+            """, (work_id, user_id, title, page_count, create_date, update_date, now, content_type))
 
     def save_following_users(self, users_list):
         """フォローしているユーザー一覧をデータベースに保存/更新します"""

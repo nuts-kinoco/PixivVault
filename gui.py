@@ -44,6 +44,15 @@ def main_window(page: ft.Page):
         ],
         value="diff"
     )
+    target_type_dropdown = ft.Dropdown(
+        label="対象", width=160,
+        options=[
+            ft.DropdownOption(key="illust", text="イラスト・漫画"),
+            ft.DropdownOption(key="novel", text="小説"),
+            ft.DropdownOption(key="both", text="両方"),
+        ],
+        value="both"
+    )
     run_btn    = ft.ElevatedButton("実行", icon=ft.Icons.PLAY_ARROW)
     pause_btn  = ft.ElevatedButton("一時停止", icon=ft.Icons.PAUSE, disabled=True)
     stop_btn   = ft.ElevatedButton("停止", icon=ft.Icons.STOP, disabled=True)
@@ -89,6 +98,7 @@ def main_window(page: ft.Page):
     def set_ui_disabled_single(disabled: bool, is_running: bool = False):
         user_id_field.disabled = disabled
         mode_dropdown.disabled = disabled
+        target_type_dropdown.disabled = disabled
         run_btn.disabled       = disabled
         export_btn.disabled    = disabled
         pause_btn.disabled     = not is_running
@@ -108,6 +118,7 @@ def main_window(page: ft.Page):
             return
 
         is_full = (mode_dropdown.value == "full")
+        target_type = target_type_dropdown.value
         append_log("--- 個別ダウンロードを開始します ---", color=ft.Colors.BLUE_300)
         progress_bar.value = 0
         progress_bar.visible = True
@@ -119,7 +130,7 @@ def main_window(page: ft.Page):
         try:
             client = PixivClient()
             run_backup(
-                user_id=user_id, client=client, db=db, is_full=is_full,
+                user_id=user_id, client=client, db=db, is_full=is_full, target_type=target_type,
                 log_callback=handle_log, progress_callback=handle_progress,
                 alert_callback=handle_alert, stop_event=stop_event, pause_event=pause_event
             )
@@ -139,7 +150,7 @@ def main_window(page: ft.Page):
     run_btn.on_click = lambda _: threading.Thread(target=run_backup_thread, daemon=True).start()
 
     tab1_content = ft.Column([
-        ft.Row([user_id_field, mode_dropdown, run_btn, pause_btn, stop_btn, export_btn], wrap=True),
+        ft.Row([user_id_field, mode_dropdown, target_type_dropdown, run_btn, pause_btn, stop_btn, export_btn], wrap=True),
         ft.Row([progress_bar, progress_text, remaining_time_text]),
     ])
 
@@ -147,6 +158,15 @@ def main_window(page: ft.Page):
     follow_list_view = ft.ListView(expand=True, spacing=5)
     follow_checkboxes = {}
 
+    batch_target_type_dropdown = ft.Dropdown(
+        label="対象", width=160,
+        options=[
+            ft.DropdownOption(key="illust", text="イラスト・漫画"),
+            ft.DropdownOption(key="novel", text="小説"),
+            ft.DropdownOption(key="both", text="両方"),
+        ],
+        value="both"
+    )
     batch_run_btn    = ft.ElevatedButton("一括ダウンロード実行", icon=ft.Icons.PLAY_ARROW)
     batch_pause_btn  = ft.ElevatedButton("一時停止", icon=ft.Icons.PAUSE, disabled=True)
     batch_stop_btn   = ft.ElevatedButton("停止", icon=ft.Icons.STOP, disabled=True)
@@ -191,6 +211,7 @@ def main_window(page: ft.Page):
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
         batch_run_btn.disabled    = disabled
+        batch_target_type_dropdown.disabled = disabled
         select_all_btn.disabled   = disabled
         deselect_all_btn.disabled = disabled
         for cb in follow_checkboxes.values():
@@ -254,8 +275,9 @@ def main_window(page: ft.Page):
 
         try:
             client = PixivClient()
+            target_type = batch_target_type_dropdown.value
             run_batch_backup(
-                user_ids=selected_ids, client=client, db=db, is_full=False,
+                user_ids=selected_ids, client=client, db=db, is_full=False, target_type=target_type,
                 log_callback=handle_log, progress_callback=None, alert_callback=handle_alert,
                 stop_event=stop_event, pause_event=pause_event, batch_progress_callback=handle_batch_progress
             )
@@ -291,8 +313,18 @@ def main_window(page: ft.Page):
     select_all_btn.on_click   = lambda _: [setattr(cb, 'value', True) for cb in follow_checkboxes.values()] or page.update()
     deselect_all_btn.on_click = lambda _: [setattr(cb, 'value', False) for cb in follow_checkboxes.values()] or page.update()
 
+    batch_actions_row = ft.Row([
+        select_all_btn,
+        deselect_all_btn,
+        ft.VerticalDivider(),
+        batch_target_type_dropdown,
+        batch_run_btn,
+        batch_pause_btn,
+        batch_stop_btn
+    ], wrap=True)
+
     tab2_content = ft.Column([
-        ft.Row([batch_run_btn, batch_pause_btn, batch_stop_btn, select_all_btn, deselect_all_btn], wrap=True),
+        batch_actions_row,
         ft.Row([batch_progress_bar, batch_progress_text, batch_remaining_time_text]),
         ft.Container(
             content=follow_list_view, expand=True,

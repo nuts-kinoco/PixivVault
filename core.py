@@ -37,7 +37,7 @@ def append_to_zip(author_dir: str, zip_path: str, log_callback=None):
         if log_callback:
             log_callback(f"Zip化に失敗しました: {e}", "ERROR")
 
-def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = False, log_callback=None, progress_callback=None, alert_callback=None, stop_event=None, pause_event=None):
+def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = False, target_type: str = "both", log_callback=None, progress_callback=None, alert_callback=None, stop_event=None, pause_event=None):
     logger = logging.getLogger(__name__)
     
     def log(msg, level="INFO"):
@@ -74,8 +74,12 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
 
     check_state()
     # 【フェーズA】Pixivから最新の作品一覧を取得
-    log("【フェーズA】Pixivから最新の作品一覧を取得します。")
-    current_works = client.get_user_works(user_id)
+    log(f"【フェーズA】Pixivから最新の作品一覧({target_type})を取得します。")
+    current_works = []
+    if target_type in ("illust", "both"):
+        current_works.extend(client.get_user_works(user_id))
+    if target_type in ("novel", "both"):
+        current_works.extend(client.get_user_novels(user_id))
     
     if not current_works:
         log("保存対象の作品がありませんでした。")
@@ -137,39 +141,71 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
             
         if needs_download:
             try:
-                img_urls = client.get_image_urls(work_id)
-                if not img_urls:
-                    log(f"作品ID: {work_id} の画像URLが見つかりませんでした。", "WARNING")
-                    continue
-                
+                work_type = work.get('type', 'illust')
                 safe_title = sanitize_filename(title)
                 safe_user_name = sanitize_filename(user_name)
-                
                 author_dir_name = f"{safe_user_name}({user_id})"
                 work_img_dir = os.path.join(base_img_dir, author_dir_name)
                 os.makedirs(work_img_dir, exist_ok=True)
                 
-                for page_idx, img_url in enumerate(img_urls):
-                    check_state()
-                    ext = os.path.splitext(img_url.split('?')[0])[1]
-                    if not ext:
-                        ext = '.jpg'
-                        
-                    if len(img_urls) == 1:
-                        filename = f"{safe_title}{ext}"
-                    else:
-                        filename = f"{safe_title}_{page_idx + 1}{ext}"
-                        
-                    save_path = os.path.join(work_img_dir, filename)
+                if work_type == 'novel':
+                    novel_data = client.get_novel_text(work_id)
+                    content = novel_data.get('content', '')
                     
-                    if os.path.exists(save_path):
-                        log(f"画像は既に存在するためスキップします: {filename}", "DEBUG")
-                    else:
-                        client.download_image(img_url, save_path)
-                        log(f"画像の保存に成功しました: {filename}", "DEBUG")
-                
-                # 全ページの確認・ダウンロードが成功したらDBを更新 (upsert_work内部でcommitされる)
-                db.upsert_work(work_id, user_id, title, page_count, create_date, update_date)
+                    # 挿絵の処理とダウンロード
+                    embedded_images = novel_data.get('textEmbeddedImages', {})
+                    if embedded_images:
+                        novel_img_dir = os.path.join(work_img_dir, "images")
+                        os.makedirs(novel_img_dir, exist_ok=True)
+                        for img_id, img_info in embedded_images.items():
+                            original_url = img_info.get('urls', {}).get('original')
+                            if original_url:
+                                ext = os.path.splitext(original_url.split('?')[0])[1] or '.jpg'
+                                img_filename = f"{img_id}{ext}"
+                                save_path = os.path.join(novel_img_dir, img_filename)
+                                if not os.path.exists(save_path):
+                                    client.download_image(original_url, save_path)
+                                content = content.replace(f"[uploadedimage:{img_id}]", f"[挿絵: images/{img_filename}]")
+                    
+                    # ルビの変換 [[rb:漢字 > かんじ]] → 漢字《かんじ》
+                    content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'\1《\2》', content)
+                    
+                    file_name = f"{work_id}_{safe_title}.txt"
+                    file_path = os.path.join(work_img_dir, file_name)
+                    
+                    with open(file_path, 'w', encoding='utf-8-sig') as f:
+                        f.write(content)
+                        
+                    db.upsert_work(work_id, user_id, title, page_count, create_date, update_date, content_type='novel')
+                    log(f"小説の保存に成功しました: {file_name}", "DEBUG")
+                    
+                else:
+                    img_urls = client.get_image_urls(work_id)
+                    if not img_urls:
+                        log(f"作品ID: {work_id} の画像URLが見つかりませんでした。", "WARNING")
+                        continue
+                    
+                    for page_idx, img_url in enumerate(img_urls):
+                        check_state()
+                        ext = os.path.splitext(img_url.split('?')[0])[1]
+                        if not ext:
+                            ext = '.jpg'
+                            
+                        if len(img_urls) == 1:
+                            filename = f"{safe_title}{ext}"
+                        else:
+                            filename = f"{safe_title}_{page_idx + 1}{ext}"
+                            
+                        save_path = os.path.join(work_img_dir, filename)
+                        
+                        if os.path.exists(save_path):
+                            log(f"画像は既に存在するためスキップします: {filename}", "DEBUG")
+                        else:
+                            client.download_image(img_url, save_path)
+                            log(f"画像の保存に成功しました: {filename}", "DEBUG")
+                    
+                    # 全ページの確認・ダウンロードが成功したらDBを更新 (upsert_work内部でcommitされる)
+                    db.upsert_work(work_id, user_id, title, page_count, create_date, update_date, content_type='illust')
                 
             except Exception as e:
                 if stop_event and stop_event.is_set():
@@ -195,7 +231,7 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
                 log(f"Zip圧縮（追記）を実行します: {zip_target_path}")
                 append_to_zip(zip_target_dir, zip_target_path, log_callback=log)
 
-def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_full: bool = False, 
+def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_full: bool = False, target_type: str = "both",
                      log_callback=None, progress_callback=None, alert_callback=None, 
                      stop_event=None, pause_event=None, batch_progress_callback=None):
     logger = logging.getLogger(__name__)
@@ -230,7 +266,7 @@ def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_
         log(f"--- [{idx}/{total_users}] ユーザーID: {user_id} の処理を開始します ---")
         try:
             run_backup(
-                user_id=user_id, client=client, db=db, is_full=is_full,
+                user_id=user_id, client=client, db=db, is_full=is_full, target_type=target_type,
                 log_callback=log_callback, progress_callback=progress_callback,
                 alert_callback=alert_callback, stop_event=stop_event, pause_event=pause_event
             )

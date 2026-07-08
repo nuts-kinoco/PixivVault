@@ -141,6 +141,71 @@ class PixivClient:
         logger.info(f"全 {len(works_list)} 件の作品データを取得しました。")
         return works_list
 
+    def get_user_novels(self, user_id: str) -> List[Dict[str, Any]]:
+        """指定したユーザーIDの小説一覧を取得します。"""
+        logger.info(f"ユーザーID「{user_id}」の小説一覧を取得します。")
+        
+        profile_url = f"https://www.pixiv.net/ajax/user/{user_id}/profile/all"
+        profile_data = self._request_with_retry(profile_url)
+        
+        body = profile_data.get('body', {})
+        if not isinstance(body, dict):
+            return []
+
+        novels = body.get('novels', {}) or {}
+        
+        work_ids = list(novels.keys())
+        work_ids.sort(key=int, reverse=True)
+        
+        if not work_ids:
+            return []
+            
+        logger.info(f"合計 {len(work_ids)} 件の小説IDが見つかりました。詳細情報を取得します。")
+        
+        works_list = []
+        chunk_size = 48
+        
+        for i in range(0, len(work_ids), chunk_size):
+            chunk_ids = work_ids[i:i + chunk_size]
+            
+            novels_url = f"https://www.pixiv.net/ajax/user/{user_id}/profile/novels"
+            params = {
+                'is_first_page': 1 if i == 0 else 0,
+            }
+            params['ids[]'] = chunk_ids
+            
+            details_data = self._request_with_retry(novels_url, params=params)
+            works = details_data.get('body', {}).get('works', {})
+            
+            for work_id in chunk_ids:
+                work_info = works.get(str(work_id))
+                if work_info:
+                    works_list.append({
+                        'id': work_info.get('id'),
+                        'title': work_info.get('title'),
+                        'type': 'novel',
+                        'user_name': work_info.get('userName', 'Unknown'),
+                        'text_count': work_info.get('textCount', 0),
+                        'create_date': work_info.get('createDate', ''),
+                        'update_date': work_info.get('updateDate', '')
+                    })
+                    
+        return works_list
+
+    def get_novel_text(self, novel_id: str) -> dict:
+        """小説の本文テキスト、シリーズ情報、挿絵URLなどを取得します。"""
+        url = f"https://www.pixiv.net/ajax/novel/{novel_id}"
+        data = self._request_with_retry(url)
+        body = data.get('body', {})
+        
+        return {
+            'id': body.get('id'),
+            'title': body.get('title'),
+            'content': body.get('content', ''),
+            'seriesNavData': body.get('seriesNavData'),
+            'textEmbeddedImages': body.get('textEmbeddedImages', {})
+        }
+
     def get_my_user_id(self) -> str:
         """ログイン中の自分のユーザーIDを取得します。"""
         url = "https://www.pixiv.net/"

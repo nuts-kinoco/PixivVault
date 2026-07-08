@@ -73,31 +73,31 @@
 
 #### 2-A. Pixiv小説APIの調査・実装（`pixiv_client.py`）
 
-- `[ ]` **2-A-1**: `get_user_works` 内の `profile/all` レスポンスに含まれる `novels` キーを確認・取得
-- `[ ]` **2-A-2**: 小説詳細取得APIの調査（`/ajax/novel/{novel_id}` or `novel/series/{series_id}`）
+- `[x]` **2-A-1**: `get_user_works` 内の `profile/all` レスポンスに含まれる `novels` キーを確認・取得
+- `[x]` **2-A-2**: 小説詳細取得APIの調査（`/ajax/novel/{novel_id}` or `novel/series/{series_id}`）
   - エンドポイントの確認、レスポンスJSON構造の確認
-- `[ ]` **2-A-3**: `get_user_novels(self, user_id) -> List[Dict]` メソッドを追加
+- `[x]` **2-A-3**: `get_user_novels(self, user_id) -> List[Dict]` メソッドを追加
   - `profile/all` → `novels` キーの ID一覧取得 → 詳細取得（画像と同様の chunk 方式）
-- `[ ]` **2-A-4**: `get_novel_text(self, novel_id) -> dict` メソッドを追加
+- `[x]` **2-A-4**: `get_novel_text(self, novel_id) -> dict` メソッドを追加
   - 本文テキスト (`content`)、シリーズ情報 (`series`)、タイトル、作者情報を返す
-- `[ ]` **2-A-5**: 小説内の挿絵（`[uploadedimage:xxxxx]` 記法）のURLを解決するロジックを追加
+- `[x]` **2-A-5**: 小説内の挿絵（`[uploadedimage:xxxxx]` 記法）のURLを解決するロジックを追加
 
 #### 2-B. 小説の保存処理（`core.py`）
 
-- `[ ]` **2-B-1**: `run_novel_backup(user_id, ...)` 関数（または `run_backup` に統合）を追加
-- `[ ]` **2-B-2**: テキストの前処理ロジックを実装
+- `[x]` **2-B-1**: `run_novel_backup(user_id, ...)` 関数（または `run_backup` に統合）を追加
+- `[x]` **2-B-2**: テキストの前処理ロジックを実装
   - Pixiv独自記法（`[ruby:テキスト<rb>読み</rb>]` など）を整形 → ルビは `テキスト《読み》` 形式に変換
   - 挿絵記法 `[uploadedimage:XXXXX]` → `[挿絵: https://...]` に変換（またはダウンロードして同梱）
   - Unicode絵文字（💗など）はそのままUTF-8で保存（Windows標準テキストエディタは対応済み）
-- `[ ]` **2-B-3**: 各小説をフォルダ内に `{novel_id}_{safe_title}.txt` として UTF-8 BOM付きで保存
+- `[x]` **2-B-3**: 各小説をフォルダ内に `{novel_id}_{safe_title}.txt` として UTF-8 BOM付きで保存
   - BOM付きにすることでメモ帳でも文字化けなく開ける
-- `[ ]` **2-B-4**: 挿絵画像を `{フォルダ}/images/` サブディレクトリにダウンロード
-- `[ ]` **2-B-5**: DBの `works` テーブルに `content_type` カラム（`illust` / `novel`）を追加し、小説の管理も一元化
+- `[x]` **2-B-4**: 挿絵画像を `{フォルダ}/images/` サブディレクトリにダウンロード
+- `[x]` **2-B-5**: DBの `works` テーブルに `content_type` カラム（`illust` / `novel`）を追加し、小説の管理も一元化
 
 #### 2-C. 小説のUI対応（`gui.py`）
 
-- `[ ]` **2-C-1**: タブ1（個別ダウンロード）に「**イラスト/漫画**・**小説**・**両方**」の実行対象を選択するラジオボタン or ドロップダウンを追加
-- `[ ]` **2-C-2**: フォロー一覧タブの一括ダウンロードでも同様の対象選択を追加
+- `[x]` **2-C-1**: タブ1（個別ダウンロード）に「**イラスト/漫画**・**小説**・**両方**」の実行対象を選択するラジオボタン or ドロップダウンを追加
+- `[x]` **2-C-2**: フォロー一覧タブの一括ダウンロードでも同様の対象選択を追加
 
 ---
 
