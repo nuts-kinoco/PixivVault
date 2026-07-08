@@ -221,6 +221,9 @@ def main_window(page: ft.Page):
     batch_remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)
 
     def load_follow_list_ui():
+        # 現在のチェックボックスの選択状態を退避
+        saved_states = {uid: cb.value for uid, cb in follow_checkboxes.items()}
+        
         follow_list_view.controls.clear()
         follow_checkboxes.clear()
         users = db.get_following_users()
@@ -232,6 +235,8 @@ def main_window(page: ft.Page):
         follow_count_text.value = str(len(users))
         
         sort_val = sort_dropdown.value
+        append_log(f"[システム] リスト更新: ソート={sort_val}, 検索='{search_q}', 件数={len(users)}")
+        
         if sort_val == "name_asc":
             users.sort(key=lambda u: (u.get('name') or '').lower())
         elif sort_val == "name_desc":
@@ -260,7 +265,8 @@ def main_window(page: ft.Page):
             if u.get('last_downloaded'):
                 label += f" [最終: {u['last_downloaded'][:10]}]"
                 
-            cb = ft.Checkbox(value=False)
+            # 退避しておいた選択状態を復元（デフォルトは False）
+            cb = ft.Checkbox(value=saved_states.get(u['user_id'], False))
             follow_checkboxes[u['user_id']] = cb
             
             def on_label_tap(e, cb_ref=cb):
@@ -298,6 +304,9 @@ def main_window(page: ft.Page):
             
             row = ft.Row([cb, fav_btn, gd, zip_btn])
             follow_list_view.controls.append(row)
+        
+        # 明示的にListViewとページを更新
+        follow_list_view.update()
         page.update()
         
     sort_dropdown.on_change = lambda _: load_follow_list_ui()
