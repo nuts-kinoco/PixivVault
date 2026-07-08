@@ -485,7 +485,10 @@ def main_window(page: ft.Page):
             )
             root.destroy()
             if file_path:
-                shutil.copy2(file_path, "cookies.txt")
+                dst_path = os.path.abspath("cookies.txt")
+                src_path = os.path.abspath(file_path)
+                if src_path != dst_path:
+                    shutil.copy2(src_path, dst_path)
                 cookie_status_text.value = "[完了] cookies.txt をインポートしました。"
                 cookie_status_text.color = ft.Colors.GREEN_400
                 cookie_status_text.visible = True
