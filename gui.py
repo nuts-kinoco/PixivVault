@@ -219,9 +219,9 @@ def main_window(page: ft.Page):
         
         sort_val = sort_dropdown.value
         if sort_val == "name_asc":
-            users.sort(key=lambda u: u['name'].lower())
+            users.sort(key=lambda u: (u.get('name') or '').lower())
         elif sort_val == "name_desc":
-            users.sort(key=lambda u: u['name'].lower(), reverse=True)
+            users.sort(key=lambda u: (u.get('name') or '').lower(), reverse=True)
 
         def toggle_zip(e, uid):
             btn = e.control
@@ -583,7 +583,7 @@ def main_window(page: ft.Page):
         ft.Row([
             tabs,
             follow_count_badge
-        ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.START),
         tab1_container,
         tab2_container,
         log_container
