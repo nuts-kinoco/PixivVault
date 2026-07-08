@@ -39,33 +39,33 @@
 > 全体設定（Advanced）またはユーザーごとの個別設定（📦）が有効な場合に実行する。
 > 新作追加時は、既存ZIPファイルへの「追記（Append）」を行う。
 
-- `[ ]` **1-A-1**: `core.py` に `append_to_zip(author_dir: str, zip_path: str)` ヘルパー関数を追加
+- `[x]` **1-A-1**: `core.py` に `append_to_zip(author_dir: str, zip_path: str)` ヘルパー関数を追加
   - フォルダ内のファイルを `zipfile` モジュールの `'a'` (Append) モードで追加し、追加が完了したファイルを削除する
   - 新規作成の場合は `shutil.make_archive` と同等の動きになるよう制御
-- `[ ]` **1-A-2**: `run_backup` / `run_batch_backup` の末尾で Zip化対象か判定するロジックを追加
+- `[x]` **1-A-2**: `run_backup` / `run_batch_backup` の末尾で Zip化対象か判定するロジックを追加
   - 対象の条件: 「全体設定がON」または「その作者の個別Zip設定（📦）がON」
-- `[ ]` **1-A-3**: 対象の場合、`append_to_zip` を呼び出して一時フォルダからZipへファイルを移動させる
-- `[ ]` **1-A-4**: ダウンロード完了後以外でも手動で圧縮できるよう、「フォロー一覧」に「Zip再圧縮」ボタンを配置
+- `[x]` **1-A-3**: 対象の場合、`append_to_zip` を呼び出して一時フォルダからZipへファイルを移動させる
+- `[x]` **1-A-4**: ダウンロード完了後以外でも手動で圧縮できるよう、「フォロー一覧」に「Zip再圧縮」ボタンを配置
 
 #### 1-B. Zip化のUI対応（`gui.py`, `database.py`）
 
-- `[ ]` **1-B-1**: `database.py` の `following_users` テーブルに `is_zipped BOOLEAN DEFAULT 0` カラムを追加するマイグレーション
-- `[ ]` **1-B-2**: フォロー一覧タブの各ユーザーカードに「📦」トグルボタンを追加
+- `[x]` **1-B-1**: `database.py` の `following_users` テーブルに `is_zipped BOOLEAN DEFAULT 0` カラムを追加するマイグレーション
+- `[x]` **1-B-2**: フォロー一覧タブの各ユーザーカードに「📦」トグルボタンを追加
   - クリック時に `db.set_zipped(user_id, status)` で個別Zip化状態を保存
-- `[ ]` **1-B-3**: 設定タブに `ft.ExpansionTile`（タイトル "Advanced / 高度な設定"）を追加し、その中に「すべての作者に対しダウンロード完了後zipにする」チェックボックス（デフォルトOFF）を配置
+- `[x]` **1-B-3**: 設定タブに `ft.ExpansionTile`（タイトル "Advanced / 高度な設定"）を追加し、その中に「すべての作者に対しダウンロード完了後zipにする」チェックボックス（デフォルトOFF）を配置
   - `settings` テーブルのキー `zip_all_after_download` で保存
 
 #### 1-C. 残り時間の推定表示（`core.py` + `gui.py`）
 
-- `[ ]` **1-C-1**: `run_backup` の `progress_callback` シグネチャを `(current, total, elapsed_sec)` の3引数に拡張
+- `[x]` **1-C-1**: `run_backup` の `progress_callback` シグネチャを `(current, total, elapsed_sec)` の3引数に拡張
   - 各作品処理の開始時刻を `time.perf_counter()` で計測し、処理完了後に経過秒を算出して渡す
-- `[ ]` **1-B-2**: `gui.py` の `handle_progress` 関数を修正
+- `[x]` **1-C-2**: `gui.py` の `handle_progress` 関数を修正
   - 渡された `elapsed_sec` を内部リスト（直近10件）に蓄積し、移動平均速度（件/秒）を計算
   - `remaining_count / avg_speed` → 「残り約XX分XX秒」or「残り約XX秒」に変換して表示
-- `[ ]` **1-B-3**: `gui.py` に `remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)` を追加
+- `[x]` **1-C-3**: `gui.py` に `remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)` を追加
   - `ft.Row([progress_bar, progress_text, remaining_time_text])` の形でプログレスバー横に配置
-- `[ ]` **1-B-4**: バッチダウンロードの `batch_progress_callback` にも経過時間を渡して残り時間を表示
-- `[ ]` **1-B-5**: ダウンロード完了・停止時に `remaining_time_text.value = ""` でクリア
+- `[x]` **1-C-4**: バッチダウンロードの `batch_progress_callback` にも経過時間を渡して残り時間を表示
+- `[x]` **1-C-5**: ダウンロード完了・停止時に `remaining_time_text.value = ""` でクリア
 
 ---
 

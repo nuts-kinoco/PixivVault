@@ -446,8 +446,10 @@ def main_window(page: ft.Page):
             ft.Row([
                 ft.Text("v2.0 build 260707", size=11, color=ft.Colors.GREY_600)
             ], alignment=ft.MainAxisAlignment.CENTER),
-        ], tight=True, width=500, spacing=8),
-        actions=[ft.TextButton("閉じる", on_click=lambda _: page.pop_dialog())],
+            ft.Row([
+                ft.TextButton("閉じる", on_click=lambda _: page.pop_dialog())
+            ], alignment=ft.MainAxisAlignment.END),
+        ], tight=True, width=500, height=420, scroll=ft.ScrollMode.AUTO, spacing=8),
     )
 
     settings_btn = ft.IconButton(
