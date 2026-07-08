@@ -730,14 +730,15 @@ def main_window(page: ft.Page):
         page.update()
 
     tabs = ft.Tabs(
+        length=4,
         selected_index=0,
         on_change=on_tab_change,
-        tabs=[
+        content=ft.TabBar(tabs=[
             ft.Tab(label="個別ダウンロード", icon=ft.Icons.PERSON),
             ft.Tab(label="フォロー中一括",   icon=ft.Icons.GROUP),
             ft.Tab(label="拡張機能", icon=ft.Icons.EXTENSION),
             ft.Tab(label="保存フォルダを開く", icon=ft.Icons.FOLDER_OPEN),
-        ],
+        ]),
         expand=False
     )
 
