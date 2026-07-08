@@ -171,6 +171,15 @@ def main_window(page: ft.Page):
     # --- タブ2: フォロー中一括ダウンロードUI ---
     follow_list_view = ft.ListView(expand=True, spacing=5)
     follow_checkboxes = {}
+    
+    follow_count_text = ft.Text("0", size=12, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD)
+    follow_count_badge = ft.Container(
+        content=follow_count_text,
+        bgcolor=ft.Colors.BLUE_700,
+        border_radius=10,
+        padding=ft.padding.Padding(8, 3, 8, 3),
+        margin=ft.margin.Margin(10, 0, 0, 0)
+    )
 
     batch_target_type_dropdown = ft.Dropdown(
         label="対象", width=160,
@@ -205,6 +214,8 @@ def main_window(page: ft.Page):
         follow_list_view.controls.clear()
         follow_checkboxes.clear()
         users = db.get_following_users()
+        
+        follow_count_text.value = str(len(users))
         
         sort_val = sort_dropdown.value
         if sort_val == "name_asc":
@@ -569,7 +580,10 @@ def main_window(page: ft.Page):
             ]),
             settings_btn
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        tabs,
+        ft.Row([
+            tabs,
+            follow_count_badge
+        ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         tab1_container,
         tab2_container,
         log_container
