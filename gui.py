@@ -9,6 +9,7 @@ from datetime import datetime
 from pixiv_client import PixivClient
 from database import Database
 from core import run_backup, export_data, run_batch_backup
+import registry_helper
 
 def main_window(page: ft.Page):
     page.title = "PixivVault"
@@ -638,15 +639,78 @@ def main_window(page: ft.Page):
         on_click=lambda _: page.show_dialog(settings_dialog)
     )
 
+    # --- 拡張機能タブ ---
+    ext_status_text = ft.Text("未登録", color=ft.Colors.GREY_400, weight=ft.FontWeight.BOLD)
+    
+    def update_ext_status():
+        is_registered = registry_helper.check_protocol_registered()
+        if is_registered:
+            ext_status_text.value = "有効（レジストリ登録済み）"
+            ext_status_text.color = ft.Colors.GREEN_400
+        else:
+            ext_status_text.value = "無効（レジストリ未登録）"
+            ext_status_text.color = ft.Colors.GREY_400
+        page.update()
+
+    def on_register_ext(e):
+        if registry_helper.register_protocol():
+            page.snack_bar = ft.SnackBar(ft.Text("自動起動を有効にしました！"), bgcolor=ft.Colors.GREEN_700)
+            page.snack_bar.open = True
+        else:
+            page.snack_bar = ft.SnackBar(ft.Text("登録に失敗しました。"), bgcolor=ft.Colors.RED_700)
+            page.snack_bar.open = True
+        update_ext_status()
+
+    def on_unregister_ext(e):
+        if registry_helper.unregister_protocol():
+            page.snack_bar = ft.SnackBar(ft.Text("自動起動を無効にしました。"), bgcolor=ft.Colors.GREY_700)
+            page.snack_bar.open = True
+        else:
+            page.snack_bar = ft.SnackBar(ft.Text("解除に失敗しました。"), bgcolor=ft.Colors.RED_700)
+            page.snack_bar.open = True
+        update_ext_status()
+
+    tab_extension_content = ft.Column([
+        ft.Text("ブラウザ拡張機能 連携設定", size=20, weight=ft.FontWeight.BOLD),
+        ft.Divider(),
+        ft.Text("PixivVaultのブラウザ拡張機能を使うと、Pixivのページから直接ダウンロード指示を送ることができます。", size=14),
+        ft.Container(height=10),
+        ft.Text("現在の状態:", weight=ft.FontWeight.BOLD),
+        ext_status_text,
+        ft.Container(height=10),
+        ft.Container(
+            content=ft.Column([
+                ft.Text("⚠️ 自動起動について", weight=ft.FontWeight.BOLD, color=ft.Colors.ORANGE_400),
+                ft.Text(
+                    "アプリが起動していない時にボタンを押した場合、ブラウザから自動でこのアプリを起動することができます。\n"
+                    "この機能を有効にするには、Windowsのレジストリ（HKEY_CURRENT_USER）にカスタムURLスキームを書き込みます。",
+                    size=12, color=ft.Colors.GREY_300
+                ),
+            ]),
+            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.ORANGE),
+            padding=10,
+            border_radius=8
+        ),
+        ft.Container(height=10),
+        ft.Row([
+            ft.ElevatedButton("自動起動を有効化", icon=ft.Icons.CHECK, color=ft.Colors.WHITE, bgcolor=ft.Colors.BLUE_600, on_click=on_register_ext),
+            ft.OutlinedButton("自動起動を無効化", icon=ft.Icons.CLOSE, on_click=on_unregister_ext),
+        ]),
+    ], scroll=ft.ScrollMode.AUTO)
+    
+    # 初期状態チェック
+    update_ext_status()
+
     # --- タブ切り替え ---
     tab1_container = ft.Container(content=tab1_content, padding=10, visible=True)
     tab2_container = ft.Container(content=tab2_content, padding=10, visible=False, expand=True)
+    tab_extension_container = ft.Container(content=tab_extension_content, padding=10, visible=False, expand=True)
 
     last_selected_tab_idx = [0]
     
     def on_tab_change(e):
         idx = e.control.selected_index
-        if idx == 2:
+        if idx == 3:
             # フォルダを開いて元のタブに戻す
             import subprocess
             folder_path = db.get_setting("save_path", "Images")
@@ -662,17 +726,18 @@ def main_window(page: ft.Page):
         last_selected_tab_idx[0] = idx
         tab1_container.visible = (idx == 0)
         tab2_container.visible = (idx == 1)
+        tab_extension_container.visible = (idx == 2)
         page.update()
 
     tabs = ft.Tabs(
-        length=3,
         selected_index=0,
         on_change=on_tab_change,
-        content=ft.TabBar(tabs=[
+        tabs=[
             ft.Tab(label="個別ダウンロード", icon=ft.Icons.PERSON),
             ft.Tab(label="フォロー中一括",   icon=ft.Icons.GROUP),
+            ft.Tab(label="拡張機能", icon=ft.Icons.EXTENSION),
             ft.Tab(label="保存フォルダを開く", icon=ft.Icons.FOLDER_OPEN),
-        ]),
+        ],
         expand=False
     )
 
@@ -690,6 +755,7 @@ def main_window(page: ft.Page):
         ]),
         tab1_container,
         tab2_container,
+        tab_extension_container,
         log_container
     )
 

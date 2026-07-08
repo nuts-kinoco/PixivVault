@@ -2,10 +2,13 @@
 
 const SERVER_URL = "http://127.0.0.1:25010/download";
 
-async function sendDownloadRequest(payload, buttonElement) {
-    const originalText = buttonElement.innerText;
-    buttonElement.innerText = "送信中...";
-    buttonElement.disabled = true;
+async function sendDownloadRequest(payload, buttonElement, isRetry = false) {
+    const originalText = isRetry ? "差分DL" : buttonElement.innerText; // Fallback original text
+    
+    if (!isRetry) {
+        buttonElement.innerText = "送信中...";
+        buttonElement.disabled = true;
+    }
 
     try {
         const response = await fetch(SERVER_URL, {
@@ -25,14 +28,31 @@ async function sendDownloadRequest(payload, buttonElement) {
             console.error("PixivVault Server Error:", await response.text());
         }
     } catch (err) {
-        buttonElement.innerText = "❌ 接続エラー";
-        buttonElement.classList.add("pv-error");
-        console.error("PixivVault Fetch Error:", err);
-        alert("PixivVaultアプリが起動しているか確認してください。");
+        if (!isRetry) {
+            console.warn("PixivVault Fetch Error. Attempting to start the app...", err);
+            buttonElement.innerText = "アプリ起動中...";
+            buttonElement.classList.remove("pv-error");
+            
+            // アプリを自動起動するためのカスタムURIスキームを叩く
+            window.location.href = "pixivvault://start";
+            
+            // アプリが起動してサーバーが立ち上がるまで数秒待機してからリトライ
+            setTimeout(() => {
+                buttonElement.innerText = "再送信中...";
+                sendDownloadRequest(payload, buttonElement, true);
+            }, 4000);
+            return; // ここで一旦終了（リトライ側でボタン状態を戻す）
+        } else {
+            buttonElement.innerText = "❌ 接続エラー";
+            buttonElement.classList.add("pv-error");
+            console.error("PixivVault Fetch Retry Error:", err);
+            alert("PixivVaultアプリの起動に失敗しました。自動起動が有効になっているか確認してください。");
+        }
     }
 
     setTimeout(() => {
-        buttonElement.innerText = originalText;
+        // 元のテキストに戻す（ハードコードのテキストではなく要素の初期状態など工夫も可能だがシンプルに）
+        buttonElement.innerText = (payload.type === 'user') ? "差分DL" : "📥 PixivVaultに保存";
         buttonElement.disabled = false;
         buttonElement.classList.remove("pv-success", "pv-error");
     }, 3000);
