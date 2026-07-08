@@ -220,7 +220,7 @@ def main_window(page: ft.Page):
     batch_progress_text = ft.Text("0 / 0", visible=False)
     batch_remaining_time_text = ft.Text("", size=12, color=ft.Colors.BLUE_200)
 
-    def load_follow_list_ui():
+    def load_follow_list_ui(sort_val_override=None, search_val_override=None):
         # 現在のチェックボックスの選択状態を退避
         saved_states = {uid: cb.value for uid, cb in follow_checkboxes.items()}
         
@@ -228,13 +228,16 @@ def main_window(page: ft.Page):
         follow_checkboxes.clear()
         users = db.get_following_users()
         
-        search_q = search_field.value.strip().lower() if search_field.value else ""
+        # 検索値: 引数優先、なければフィールドから取得
+        search_q = search_val_override if search_val_override is not None else (search_field.value or "")
+        search_q = search_q.strip().lower()
         if search_q:
             users = [u for u in users if search_q in (u.get('name') or '').lower() or search_q in str(u.get('user_id', '')).lower()]
         
         follow_count_text.value = str(len(users))
         
-        sort_val = sort_dropdown.value
+        # ソート値: 引数優先、なければドロップダウンから取得
+        sort_val = sort_val_override if sort_val_override is not None else sort_dropdown.value
         append_log(f"[システム] リスト更新: ソート={sort_val}, 検索='{search_q}', 件数={len(users)}")
         
         if sort_val == "name_asc":
@@ -309,8 +312,8 @@ def main_window(page: ft.Page):
         follow_list_view.update()
         page.update()
         
-    sort_dropdown.on_change = lambda _: load_follow_list_ui()
-    search_field.on_change = lambda _: load_follow_list_ui()
+    sort_dropdown.on_change = lambda e: load_follow_list_ui(sort_val_override=e.control.value)
+    search_field.on_change  = lambda e: load_follow_list_ui(search_val_override=e.control.value)
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
         batch_run_btn.disabled    = disabled
