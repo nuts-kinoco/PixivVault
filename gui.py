@@ -53,8 +53,8 @@ def main_window(page: ft.Page):
     mode_dropdown = ft.Dropdown(
         label="実行モード", width=150,
         options=[
-            ft.DropdownOption(key="diff", text="差分ダウンロード"),
-            ft.DropdownOption(key="full", text="完全ダウンロード"),
+            ft.DropdownOption(key="diff", text="差分DL"),
+            ft.DropdownOption(key="full", text="完全DL"),
         ],
         value="diff"
     )
