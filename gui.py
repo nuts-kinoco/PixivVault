@@ -23,6 +23,20 @@ def main_window(page: ft.Page):
     pause_event = threading.Event()
 
     log_area = ft.ListView(expand=True, spacing=2, auto_scroll=True)
+    log_container = ft.Container(
+        content=log_area,
+        border=ft.Border(
+            top=ft.BorderSide(1, ft.Colors.OUTLINE), bottom=ft.BorderSide(1, ft.Colors.OUTLINE),
+            left=ft.BorderSide(1, ft.Colors.OUTLINE), right=ft.BorderSide(1, ft.Colors.OUTLINE),
+        ),
+        border_radius=5, padding=10, expand=True, bgcolor="#1A1C1E"
+    )
+
+    list_expanded = [False]
+    def toggle_list_expansion(e=None):
+        list_expanded[0] = not list_expanded[0]
+        log_container.visible = not list_expanded[0]
+        page.update()
 
     def append_log(msg: str, color: str = ft.Colors.WHITE):
         log_area.controls.append(ft.Text(msg, color=color, selectable=True, size=13))
@@ -167,6 +181,16 @@ def main_window(page: ft.Page):
         ],
         value="both"
     )
+    
+    sort_dropdown = ft.Dropdown(
+        label="ソート", width=140,
+        options=[
+            ft.DropdownOption(key="default", text="同期順"),
+            ft.DropdownOption(key="name_asc", text="名前 (昇順)"),
+            ft.DropdownOption(key="name_desc", text="名前 (降順)"),
+        ],
+        value="default"
+    )
     batch_run_btn    = ft.ElevatedButton("一括ダウンロード実行", icon=ft.Icons.PLAY_ARROW)
     batch_pause_btn  = ft.ElevatedButton("一時停止", icon=ft.Icons.PAUSE, disabled=True)
     batch_stop_btn   = ft.ElevatedButton("停止", icon=ft.Icons.STOP, disabled=True)
@@ -181,6 +205,12 @@ def main_window(page: ft.Page):
         follow_list_view.controls.clear()
         follow_checkboxes.clear()
         users = db.get_following_users()
+        
+        sort_val = sort_dropdown.value
+        if sort_val == "name_asc":
+            users.sort(key=lambda u: u['name'].lower())
+        elif sort_val == "name_desc":
+            users.sort(key=lambda u: u['name'].lower(), reverse=True)
 
         def toggle_zip(e, uid):
             btn = e.control
@@ -195,8 +225,21 @@ def main_window(page: ft.Page):
             label = f"{u['name']} (@{u['account']}) - ID:{u['user_id']}"
             if u.get('last_downloaded'):
                 label += f" [最終: {u['last_downloaded'][:10]}]"
-            cb = ft.Checkbox(label=label, value=False, expand=True)
+                
+            cb = ft.Checkbox(value=False)
             follow_checkboxes[u['user_id']] = cb
+            
+            def on_label_tap(e, cb_ref=cb):
+                cb_ref.value = not cb_ref.value
+                page.update()
+                
+            label_text = ft.Text(label, expand=True)
+            gd = ft.GestureDetector(
+                content=label_text,
+                on_tap=on_label_tap,
+                on_double_tap=toggle_list_expansion,
+                mouse_cursor=ft.MouseCursor.CLICK
+            )
             
             is_zipped = u.get('is_zipped', 0)
             zip_btn = ft.IconButton(
@@ -205,9 +248,11 @@ def main_window(page: ft.Page):
                 tooltip="個別Zip化",
                 on_click=lambda e, uid=u['user_id']: toggle_zip(e, uid)
             )
-            row = ft.Row([cb, zip_btn])
+            row = ft.Row([cb, gd, zip_btn])
             follow_list_view.controls.append(row)
         page.update()
+        
+    sort_dropdown.on_change = lambda _: load_follow_list_ui()
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
         batch_run_btn.disabled    = disabled
@@ -318,6 +363,7 @@ def main_window(page: ft.Page):
         deselect_all_btn,
         ft.VerticalDivider(),
         batch_target_type_dropdown,
+        sort_dropdown,
         batch_run_btn,
         batch_pause_btn,
         batch_stop_btn
@@ -521,14 +567,7 @@ def main_window(page: ft.Page):
         tabs,
         tab1_container,
         tab2_container,
-        ft.Container(
-            content=log_area,
-            border=ft.Border(
-                top=ft.BorderSide(1, ft.Colors.OUTLINE), bottom=ft.BorderSide(1, ft.Colors.OUTLINE),
-                left=ft.BorderSide(1, ft.Colors.OUTLINE), right=ft.BorderSide(1, ft.Colors.OUTLINE),
-            ),
-            border_radius=5, padding=10, expand=True, bgcolor="#1A1C1E"
-        )
+        log_container
     )
 
     # --- 起動時バックグラウンド処理 ---
