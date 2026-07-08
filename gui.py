@@ -201,6 +201,14 @@ def main_window(page: ft.Page):
         ],
         value="default"
     )
+    
+    search_field = ft.TextField(
+        label="名前・IDで検索",
+        width=160,
+        height=40,
+        content_padding=10
+    )
+    
     batch_run_btn    = ft.ElevatedButton("一括ダウンロード実行", icon=ft.Icons.PLAY_ARROW)
     batch_pause_btn  = ft.ElevatedButton("一時停止", icon=ft.Icons.PAUSE, disabled=True)
     batch_stop_btn   = ft.ElevatedButton("停止", icon=ft.Icons.STOP, disabled=True)
@@ -215,6 +223,10 @@ def main_window(page: ft.Page):
         follow_list_view.controls.clear()
         follow_checkboxes.clear()
         users = db.get_following_users()
+        
+        search_q = search_field.value.strip().lower() if search_field.value else ""
+        if search_q:
+            users = [u for u in users if search_q in (u.get('name') or '').lower() or search_q in str(u.get('user_id', '')).lower()]
         
         follow_count_text.value = str(len(users))
         
@@ -270,6 +282,7 @@ def main_window(page: ft.Page):
         page.update()
         
     sort_dropdown.on_change = lambda _: load_follow_list_ui()
+    search_field.on_change = lambda _: load_follow_list_ui()
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
         batch_run_btn.disabled    = disabled
@@ -381,6 +394,7 @@ def main_window(page: ft.Page):
         ft.VerticalDivider(),
         batch_target_type_dropdown,
         sort_dropdown,
+        search_field,
         batch_run_btn,
         batch_pause_btn,
         batch_stop_btn
@@ -522,9 +536,9 @@ def main_window(page: ft.Page):
             ft.DropdownOption("both", "EPUBとTXT両方"),
         ],
         value=db.get_setting("novel_save_format", "epub"),
-        on_change=on_novel_format_change,
         width=300
     )
+    novel_format_dropdown.on_change = on_novel_format_change
     
     advanced_settings = ft.ExpansionTile(
         title=ft.Text("Advanced / 高度な設定", weight=ft.FontWeight.BOLD),
