@@ -8,6 +8,7 @@ import zipfile
 from datetime import datetime
 from database import Database
 from pixiv_client import PixivClient
+import epub_builder
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', '_', name)
@@ -103,6 +104,7 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
     # 【フェーズC】新規・更新分（または全件）ダウンロード
     log("【フェーズC】画像のダウンロードとDBの更新を行います。")
     base_img_dir = db.get_setting("save_path", "Images")
+    novel_save_format = db.get_setting("novel_save_format", "epub")
     total = len(current_works)
     
     start_time = time.perf_counter()
@@ -150,10 +152,14 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
                 
                 if work_type == 'novel':
                     novel_data = client.get_novel_text(work_id)
-                    content = novel_data.get('content', '')
+                    raw_content = novel_data.get('content', '')
                     
                     # 挿絵の処理とダウンロード
                     embedded_images = novel_data.get('textEmbeddedImages', {})
+                    epub_embedded_images = []
+                    txt_content = raw_content
+                    html_content = raw_content
+                    
                     if embedded_images:
                         novel_img_dir = os.path.join(work_img_dir, "images")
                         os.makedirs(novel_img_dir, exist_ok=True)
@@ -165,19 +171,60 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
                                 save_path = os.path.join(novel_img_dir, img_filename)
                                 if not os.path.exists(save_path):
                                     client.download_image(original_url, save_path)
-                                content = content.replace(f"[uploadedimage:{img_id}]", f"[挿絵: images/{img_filename}]")
+                                
+                                # TXT用
+                                txt_content = txt_content.replace(f"[uploadedimage:{img_id}]", f"[挿絵: images/{img_filename}]")
+                                # HTML (EPUB) 用
+                                html_content = html_content.replace(f"[uploadedimage:{img_id}]", f'<img src="../Images/{img_id}{ext}" alt="挿絵" />')
+                                epub_embedded_images.append({'id': img_id, 'path': save_path, 'ext': ext})
                     
-                    # ルビの変換 [[rb:漢字 > かんじ]] → 漢字《かんじ》
-                    content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'\1《\2》', content)
+                    # ルビの変換
+                    # TXT用: [[rb:漢字 > かんじ]] → 漢字《かんじ》
+                    txt_content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'\1《\2》', txt_content)
+                    # HTML用: [[rb:漢字 > かんじ]] → <ruby>漢字<rt>かんじ</rt></ruby>
+                    html_content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'<ruby>\1<rt>\2</rt></ruby>', html_content)
                     
-                    file_name = f"{work_id}_{safe_title}.txt"
-                    file_path = os.path.join(work_img_dir, file_name)
+                    # Pixiv独自の改ページタグ [newpage] を処理
+                    txt_content = txt_content.replace('[newpage]', '\n\n---\n\n')
+                    html_content = html_content.replace('[newpage]', '<hr/>')
                     
-                    with open(file_path, 'w', encoding='utf-8-sig') as f:
-                        f.write(content)
+                    # HTML用の改行処理 (Pixivは改行文字がそのまま改行になる)
+                    html_content = html_content.replace('\n', '<br/>\n')
+                    
+                    # 表紙画像の取得と保存
+                    cover_image_path = None
+                    cover_url = novel_data.get('coverUrl')
+                    if cover_url:
+                        novel_img_dir = os.path.join(work_img_dir, "images")
+                        os.makedirs(novel_img_dir, exist_ok=True)
+                        ext = os.path.splitext(cover_url.split('?')[0])[1] or '.jpg'
+                        cover_save_path = os.path.join(novel_img_dir, f"cover_{work_id}{ext}")
+                        if not os.path.exists(cover_save_path):
+                            client.download_image(cover_url, cover_save_path)
+                        cover_image_path = cover_save_path
+                    
+                    if novel_save_format in ('epub', 'both'):
+                        epub_name = f"{work_id}_{safe_title}.epub"
+                        epub_path = os.path.join(work_img_dir, epub_name)
+                        epub_builder.create_epub(
+                            output_path=epub_path,
+                            title=title,
+                            author=user_name,
+                            content_html=html_content,
+                            cover_image_path=cover_image_path,
+                            embedded_images=epub_embedded_images
+                        )
+                        log(f"小説のEPUB保存に成功しました: {epub_name}", "DEBUG")
+                        
+                    if novel_save_format in ('txt', 'both'):
+                        txt_name = f"{work_id}_{safe_title}.txt"
+                        txt_path = os.path.join(work_img_dir, txt_name)
+                        with open(txt_path, 'w', encoding='utf-8-sig') as f:
+                            f.write(txt_content)
+                        log(f"小説のTXT保存に成功しました: {txt_name}", "DEBUG")
                         
                     db.upsert_work(work_id, user_id, title, page_count, create_date, update_date, content_type='novel')
-                    log(f"小説の保存に成功しました: {file_name}", "DEBUG")
+                    log(f"作品DBを更新しました: {title}", "DEBUG")
                     
                 else:
                     img_urls = client.get_image_urls(work_id)

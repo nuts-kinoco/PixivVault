@@ -511,6 +511,21 @@ def main_window(page: ft.Page):
         on_change=on_zip_all_change
     )
     
+    def on_novel_format_change(e):
+        db.set_setting("novel_save_format", e.control.value)
+        
+    novel_format_dropdown = ft.Dropdown(
+        label="小説の保存形式",
+        options=[
+            ft.DropdownOption("epub", "EPUBのみ (推奨)"),
+            ft.DropdownOption("txt", "TXTのみ"),
+            ft.DropdownOption("both", "EPUBとTXT両方"),
+        ],
+        value=db.get_setting("novel_save_format", "epub"),
+        on_change=on_novel_format_change,
+        width=300
+    )
+    
     advanced_settings = ft.ExpansionTile(
         title=ft.Text("Advanced / 高度な設定", weight=ft.FontWeight.BOLD),
         controls=[zip_all_checkbox]
@@ -537,6 +552,8 @@ def main_window(page: ft.Page):
                               on_click=lambda _: threading.Thread(target=_run_folder_picker, daemon=True).start()),
             save_path_text,
             ft.Divider(),
+            ft.Text("4. その他の設定", weight=ft.FontWeight.BOLD),
+            novel_format_dropdown,
             advanced_settings,
             ft.Row([
                 ft.Text("v2.0 build 260707", size=11, color=ft.Colors.GREY_600)

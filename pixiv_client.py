@@ -203,7 +203,8 @@ class PixivClient:
             'title': body.get('title'),
             'content': body.get('content', ''),
             'seriesNavData': body.get('seriesNavData'),
-            'textEmbeddedImages': body.get('textEmbeddedImages', {})
+            'textEmbeddedImages': body.get('textEmbeddedImages', {}),
+            'coverUrl': body.get('coverUrl', '')
         }
 
     def get_my_user_id(self) -> str:
