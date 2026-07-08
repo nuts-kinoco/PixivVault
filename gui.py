@@ -172,13 +172,14 @@ def main_window(page: ft.Page):
     follow_list_view = ft.ListView(expand=True, spacing=5)
     follow_checkboxes = {}
     
-    follow_count_text = ft.Text("0", size=12, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD)
+    follow_count_text = ft.Text("0", size=10, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD)
     follow_count_badge = ft.Container(
         content=follow_count_text,
         bgcolor=ft.Colors.BLUE_700,
         border_radius=10,
-        padding=ft.padding.Padding(8, 3, 8, 3),
-        margin=ft.margin.Margin(10, 0, 0, 0)
+        padding=ft.padding.Padding(5, 2, 5, 2),
+        right=0,
+        top=2
     )
 
     batch_target_type_dropdown = ft.Dropdown(
@@ -580,10 +581,10 @@ def main_window(page: ft.Page):
             ]),
             settings_btn
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        ft.Row([
+        ft.Stack([
             tabs,
             follow_count_badge
-        ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.START),
+        ]),
         tab1_container,
         tab2_container,
         log_container
