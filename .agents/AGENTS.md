@@ -1,2 +1,48 @@
 # Rules
 - **Do not use Conda**: The user does not use Conda for this project (`PixivVault`). Do not create batch files or write scripts assuming a Conda environment. Ensure instructions and commands work directly via `python` or `pip`.
+
+## Flet Version Lock (CRITICAL)
+
+このプロジェクトは **Flet 0.85.3** を使用しています。
+
+### 固定バージョン
+- Python: 3.13+
+- Flet: **0.85.3**
+- このバージョンのAPI・仕様のみを使用すること
+Flet 0.85.3以外のバージョンを前提としたコードを書いてはいけません。
+
+### 絶対ルール
+コードを書く前に必ず確認してください。
+「このコードは Flet 0.85.3 のAPIとして存在するか？」
+最新版や旧バージョンの知識ではなく、**Flet 0.85.3** を唯一の正解として実装してください。
+
+### 禁止事項
+以下は禁止です。
+- Flet 0.85.3以前の古いAPI
+- Flet 0.85.3以降の新しいAPI
+- Deprecated API
+- 廃止済みプロパティ
+- 数年前の記事由来のコード
+- 推測によるAPI名の創作
+- 存在確認を行わない実装
+
+### エラー修正時
+Flet関連エラーを修正する場合は、まず
+「Flet 0.85.3ではこのAPIは存在するか」を確認してください。
+Python側のロジックを変更する前に、API仕様の確認を最優先してください。
+
+### 実装方針
+採用してよいものは以下のみです。
+- Flet 0.85.3公式ドキュメント
+- Flet 0.85.3公式API
+- Flet 0.85.3で動作確認可能な記法
+他バージョンのサンプルコードを流用してはいけません。
+
+### APIが不明な場合
+推測でコードを書いてはいけません。
+存在が確認できないAPIは使用禁止です。
+必ず「Flet 0.85.3では仕様確認が必要」と判断してください。
+
+### 最重要
+このプロジェクトでは **Flet 0.85.3のみが正しい実装対象です。**
+それ以外のバージョンの知識は参照せず、常にFlet 0.85.3準拠のコードを生成してください。

@@ -1,57 +1,121 @@
 // PixivVault Web Extension Content Script
 
 const SERVER_URL = "http://127.0.0.1:25010/download";
+const FETCH_TIMEOUT_MS = 8000;
 
-async function sendDownloadRequest(payload, buttonElement, isRetry = false) {
-    const originalText = isRetry ? "差分DL" : buttonElement.innerText; // Fallback original text
-    
-    if (!isRetry) {
-        buttonElement.innerText = "送信中...";
-        buttonElement.disabled = true;
+// background.js からの応答がない場合(サービスワーカー未応答等)の直接fetchフォールバックが
+// 永久にハングしないよう、タイムアウト付きfetchを使用する。
+function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+// fetch自体が失敗した(=サーバーに接続すらできなかった)場合の分類。
+// ブラウザのエラーメッセージ文言(「Failed to fetch」等)に依存せず、Errorの型で判定する。
+function classifyFetchError(err) {
+    return err && err.name === 'AbortError' ? 'timeout' : 'network';
+}
+
+async function fetchStatusFromServer(path) {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+            const res = await chrome.runtime.sendMessage({ action: "fetchStatus", path: path });
+            if (res && res.success) return res.data;
+            return null;
+        } catch (e) {}
     }
-
     try {
-        const response = await fetch(SERVER_URL, {
+        const res = await fetchWithTimeout(`http://127.0.0.1:25010${path}`);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch (e) {
+        return null;
+    }
+}
+
+async function requestToServer(payload) {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+            const res = await chrome.runtime.sendMessage({ action: "sendDownloadRequest", payload: payload });
+            if (res && res.success) {
+                return { ok: true };
+            } else if (res && !res.success) {
+                return { ok: false, error: res.error, kind: res.kind };
+            }
+        } catch (e) {
+            console.warn("Service Worker send failed, falling back to direct fetch:", e);
+        }
+    }
+    try {
+        const response = await fetchWithTimeout(SERVER_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify(payload)
         });
+        return {
+            ok: response.ok,
+            error: response.ok ? null : await response.text(),
+            kind: response.ok ? null : 'http'
+        };
+    } catch (err) {
+        return { ok: false, error: err.toString(), kind: classifyFetchError(err) };
+    }
+}
 
-        if (response.ok) {
+async function sendDownloadRequest(payload, buttonElement, isRetry = false, retryCount = 0) {
+    if (!isRetry) {
+        buttonElement.innerText = "送信中...";
+        buttonElement.disabled = true;
+    }
+
+    try {
+        const result = await requestToServer(payload);
+
+        if (result.ok) {
             buttonElement.innerText = "✓ 送信完了";
             buttonElement.classList.add("pv-success");
         } else {
+            // 'network'/'timeout' はサーバーに接続すらできなかったケース(アプリ未起動の可能性)。
+            // 自動起動・再送信フローに乗せる。'http' はアプリが実際にエラーを返したケースなので
+            // 起動待ちとして扱わず、そのまま失敗表示する。
+            if (result.kind === 'network' || result.kind === 'timeout') {
+                throw new Error(result.error);
+            }
             buttonElement.innerText = "❌ 失敗";
             buttonElement.classList.add("pv-error");
-            console.error("PixivVault Server Error:", await response.text());
+            console.error("PixivVault Server Error:", result.error);
         }
     } catch (err) {
-        if (!isRetry) {
+        if (!isRetry && retryCount === 0) {
             console.warn("PixivVault Fetch Error. Attempting to start the app...", err);
             buttonElement.innerText = "アプリ起動中...";
             buttonElement.classList.remove("pv-error");
             
-            // アプリを自動起動するためのカスタムURIスキームを叩く
             window.location.href = "pixivvault://start";
             
-            // アプリが起動してサーバーが立ち上がるまで数秒待機してからリトライ
             setTimeout(() => {
                 buttonElement.innerText = "再送信中...";
-                sendDownloadRequest(payload, buttonElement, true);
-            }, 4000);
-            return; // ここで一旦終了（リトライ側でボタン状態を戻す）
+                sendDownloadRequest(payload, buttonElement, true, 1);
+            }, 3500);
+            return;
+        } else if (retryCount > 0 && retryCount < 7) {
+            buttonElement.innerText = `起動待機中(${retryCount}/7)...`;
+            setTimeout(() => {
+                sendDownloadRequest(payload, buttonElement, true, retryCount + 1);
+            }, 2500);
+            return;
         } else {
             buttonElement.innerText = "❌ 接続エラー";
             buttonElement.classList.add("pv-error");
             console.error("PixivVault Fetch Retry Error:", err);
-            alert("PixivVaultアプリの起動に失敗しました。自動起動が有効になっているか確認してください。");
+            alert("PixivVaultサーバーに接続できませんでした。\nアプリが起動していることと、ポート(25010)で通信できる状態であるかご確認ください。");
         }
     }
 
     setTimeout(() => {
-        // 元のテキストに戻す（ハードコードのテキストではなく要素の初期状態など工夫も可能だがシンプルに）
         buttonElement.innerText = (payload.type === 'user') ? "差分DL" : "📥 PixivVaultに保存";
         buttonElement.disabled = false;
         buttonElement.classList.remove("pv-success", "pv-error");
@@ -96,6 +160,13 @@ function injectArtworkButton() {
     btn.classList.add("pv-floating-btn"); // 画面右下に固定配置するフォールバック
     
     document.body.appendChild(btn);
+
+    fetchStatusFromServer(`/api/work/${workId}`).then(data => {
+        if (data && data.downloaded) {
+            btn.innerText = "✅ 保存済";
+            btn.classList.add("pv-success");
+        }
+    });
 }
 
 // ==========================================
@@ -115,6 +186,13 @@ function injectNovelButton() {
     btn.classList.add("pv-floating-btn");
     
     document.body.appendChild(btn);
+
+    fetchStatusFromServer(`/api/work/${novelId}`).then(data => {
+        if (data && data.downloaded) {
+            btn.innerText = "✅ 保存済";
+            btn.classList.add("pv-success");
+        }
+    });
 }
 
 // ==========================================
@@ -141,7 +219,7 @@ function injectUserButtons() {
         if (document.getElementById(btnId)) return;
         
         const btn = createVaultButton("差分DL", (btnEl) => {
-            sendDownloadRequest({ type: "user", user_id: userId }, btnEl);
+            sendDownloadRequest({ type: "user", user_id: userId, new_only: true }, btnEl);
         });
         btn.id = btnId;
         btn.classList.add("pv-small-btn");
@@ -152,10 +230,28 @@ function injectUserButtons() {
         
         const parent = link.parentElement;
         if (parent) {
+            const statusBox = document.createElement("span");
+            statusBox.className = "pv-status-box";
+            statusBox.style.width = "65px";
+            statusBox.style.minWidth = "65px";
+            statusBox.style.flexShrink = "0";
+            statusBox.style.textAlign = "right";
+            statusBox.style.whiteSpace = "nowrap";
+            statusBox.style.marginRight = "8px";
+            statusBox.style.fontSize = "12px";
+            statusBox.style.color = "#2ecc71";
+            statusBox.innerText = "";
+            
             parent.insertBefore(btn, link);
-            // 親要素をフレックスボックスにして横並びを整える
+            parent.insertBefore(statusBox, btn);
             parent.style.display = 'flex';
             parent.style.alignItems = 'center';
+            
+            fetchStatusFromServer(`/api/user/${userId}/status`).then(data => {
+                if (data && data.downloaded && data.downloaded > 0) {
+                    statusBox.innerText = `☑ ${data.downloaded}件`;
+                }
+            });
         }
     });
 }
