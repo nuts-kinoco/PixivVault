@@ -38,8 +38,11 @@ def check_single_instance(port=25011):
     global _instance_lock_socket
     try:
         _instance_lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # ソケットオプションを設定して再利用できるようにする
-        _instance_lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Windowsでは排他利用を設定して二重起動を防ぎ、他OSではREUSEADDRを使用する
+        if sys.platform == 'win32':
+            _instance_lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            _instance_lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         _instance_lock_socket.bind(('127.0.0.1', port))
         _instance_lock_socket.listen(1)
     except socket.error:
@@ -78,8 +81,8 @@ def main():
         # 画面サイズの設定 (16:9比率)
         page.window.width = 1152
         page.window.height = 648
-        # アイコンの設定はFletから行わず、EXEのアイコンをそのまま使わせる
-        # (page.window.iconを指定するとFletが上書きして魚になる問題の回避)
+        # ウィンドウのタイトルバー・タスクバーに適用するアイコンアセットを指定
+        page.window.icon = get_asset_path("icon.ico")
         
         # メインUIの構築
         main_window(page)

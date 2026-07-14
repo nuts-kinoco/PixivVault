@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from pixiv_client import PixivClient
 from database import Database
-from core import run_backup, export_data, run_batch_backup, download_bookmarks, get_unfollowed_bookmark_authors
+from core import run_backup, export_data, run_batch_backup, download_bookmarks, get_unfollowed_bookmark_authors, run_single_work_backup
 import registry_helper
 import base64
 
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 gui_log_callback = [None]
 gui_queue_log_callback = [None]
+gui_trigger_cookie_check = [None]
 is_downloading_active = [False]
 request_stop_all = [None]
 # server.py（拡張機能連携）からもダウンロード中フラグを正しく管理できるようにするためのフック。
@@ -1539,6 +1540,7 @@ def main_window(page: ft.Page):
         page.update()
 
     # 初期化
+    gui_trigger_cookie_check[0] = lambda: threading.Thread(target=check_login_status, daemon=True).start()
     load_follow_list_ui()
     load_failed_queue_ui()
     threading.Thread(target=check_login_status, daemon=True).start()
