@@ -110,6 +110,23 @@ class PixivVaultRequestHandler(BaseHTTPRequestHandler):
                     
             except json.JSONDecodeError:
                 self._send_response(400, {"status": "error", "message": "Invalid JSON"})
+        elif self.path == '/api/cookie/sync':
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                cookies_list = data.get('cookies', [])
+                if not isinstance(cookies_list, list) or len(cookies_list) == 0:
+                    self._send_response(400, {"status": "error", "message": "No cookies provided"})
+                else:
+                    success, msg = save_cookies_from_extension(cookies_list)
+                    if success:
+                        self._send_response(200, {"status": "ok", "message": msg})
+                    else:
+                        self._send_response(400, {"status": "error", "message": msg})
+            except Exception as e:
+                logger.error(f"Cookie sync error: {e}")
+                self._send_response(500, {"status": "error", "message": str(e)})
         else:
             self._send_response(404, {"status": "error", "message": "Not found"})
 
@@ -123,6 +140,75 @@ class PixivVaultRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # http.server のデフォルトログ出力をロガーに流す
         logger.debug("%s - - [%s] %s" % (self.address_string(), self.log_date_time_string(), format % args))
+
+
+def save_cookies_from_extension(cookies_list):
+    import os
+    import time
+    lines = [
+        "# Netscape HTTP Cookie File",
+        "# http://curl.haxx.se/docs/http-cookies.html",
+        "# This is a generated file by PixivVault Extension! Do not edit.",
+        ""
+    ]
+    has_pixiv = False
+    for c in cookies_list:
+        domain = c.get('domain', '')
+        if 'pixiv.net' in domain:
+            has_pixiv = True
+        include_sub = "TRUE" if domain.startswith('.') else "FALSE"
+        path = c.get('path', '/')
+        secure = "TRUE" if c.get('secure', False) else "FALSE"
+        
+        exp = c.get('expirationDate')
+        if exp is not None and isinstance(exp, (int, float)) and exp > 0:
+            expires_ts = int(exp)
+        else:
+            # セッションCookie等で有効期限が無い場合は30日後にしておく
+            expires_ts = int(time.time()) + 86400 * 30
+            
+        name = c.get('name', '')
+        value = c.get('value', '')
+        lines.append(f"{domain}\t{include_sub}\t{path}\t{secure}\t{expires_ts}\t{name}\t{value}")
+    
+    if not has_pixiv:
+        return False, "Pixiv cookies not found"
+
+    new_content = "\n".join(lines) + "\n"
+
+    # 内容に変化がなければファイルへの書き込みもGUI通知も行わない
+    # (ページ遷移・フォーカス毎に無条件で発火するため、無駄な書き込みとログ・スレッド生成を防ぐ)
+    old_content = None
+    if os.path.exists("cookies.txt"):
+        try:
+            with open("cookies.txt", "r", encoding="utf-8") as f:
+                old_content = f.read()
+        except Exception:
+            old_content = None
+    if old_content == new_content:
+        return True, "No changes"
+
+    temp_file = "cookies.txt.tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    # os.replace は宛先が既に存在してもWindows/POSIX双方で原子的に上書きできる。
+    # remove→renameの2段階だとWindowsではremoveの失敗(ファイルロック中など)後に
+    # renameがFileExistsErrorで落ちるため使わない。
+    os.replace(temp_file, "cookies.txt")
+
+    # ログ出力＆GUIコールバック
+    try:
+        from gui import gui_queue_log_callback, gui_trigger_cookie_check
+        if gui_queue_log_callback and gui_queue_log_callback[0]:
+            # マトリックス・サイバーグリーンで表示
+            gui_queue_log_callback[0]("[Cookie Auto-Sync] 拡張機能から最新のCookieを自動同期しました", color="#00FF66")
+        if gui_trigger_cookie_check and gui_trigger_cookie_check[0]:
+            gui_trigger_cookie_check[0]()
+    except Exception as e:
+        logger.debug(f"GUI通知エラー: {e}")
+
+    return True, "OK"
+
 
 
 class PixivVaultServer(HTTPServer):

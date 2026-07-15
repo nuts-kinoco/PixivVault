@@ -5,6 +5,7 @@ import shutil
 import logging
 import time
 import zipfile
+import threading
 from datetime import datetime
 from database import Database
 from pixiv_client import PixivClient
@@ -12,6 +13,132 @@ import epub_builder
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', '_', name)
+
+# 作者(user_id)単位のロック。GUI手動実行・スケジューラ定期チェック・拡張機能連携キューの
+# 3経路が同じ作者のダウンロード/ZIP追記を同時に行うと、zipfileはファイルロックをしないため
+# ZIPアーカイブの中央ディレクトリが競合破損する。そのため同一作者の処理は必ず直列化する。
+_user_locks = {}
+_user_locks_guard = threading.Lock()
+
+def get_user_lock(user_id) -> threading.Lock:
+    key = str(user_id)
+    with _user_locks_guard:
+        lock = _user_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _user_locks[key] = lock
+        return lock
+
+def notify_toast(db: Database, title: str, body: str):
+    """OS通知(トースト)を送信する。scheduler.py/server.pyの通知と同じ設定キー(enable_notifications)を使う。"""
+    if db.get_setting("enable_notifications", "1") != "1":
+        return
+    try:
+        import win11toast
+        threading.Thread(target=lambda: win11toast.toast(title, body, app_id="PixivVault"), daemon=True).start()
+    except Exception as e:
+        logging.getLogger(__name__).error(f"通知エラー: {e}")
+
+def _verify_zip_and_notify(db: Database, zip_path: str, label: str, log, alert=None):
+    """ZIP追記直後に整合性を検証し、破損していればログ・アラート・OS通知で知らせる。
+    (DBのwork/failed_queueは自動変更しない。再ダウンロードするかはユーザーが判断する想定)"""
+    if not os.path.exists(zip_path):
+        return
+    log(f"ZIPの整合性を検証しています: {label} (サイズが大きい場合、時間がかかることがあります)")
+    is_valid, reason = verify_work_integrity(zip_path, is_zip=True)
+    if is_valid:
+        return
+    msg = f"ZIP破損を検出しました: {label} ({reason})"
+    log(msg, "ERROR")
+    if alert:
+        alert(msg)
+    notify_toast(db, "PixivVault - ZIP破損検出", f"{label} のアーカイブに問題があります: {reason}")
+
+# 【魔法の解放】Pythonの zipfile.ZIP64_LIMIT は標準で2GB(0x7FFFFFFF)に設定されているため、
+# 2GB超～4GB未満のサイズ・オフセットでも allowZip64=False 時に例外が出たり、
+# allowZip64=True 時に途中からZip64に切り替わるキメラZIPを生成してしまう。
+# 本来のZIP規格上限である4GB(0xFFFFFFFF)へと解放してキメラ構造の発生を永久防止する。
+try:
+    zipfile.ZIP64_LIMIT = 0xFFFFFFFF
+except Exception:
+    pass
+
+def _has_zip64_extra(extra: bytes) -> bool:
+    """ZipInfo.extra (拡張フィールド) 内にZip64拡張情報ヘッダ(header_id=1)が含まれるか判定する。"""
+    pos = 0
+    while pos + 4 <= len(extra):
+        header_id = int.from_bytes(extra[pos:pos + 2], 'little')
+        data_size = int.from_bytes(extra[pos + 2:pos + 4], 'little')
+        if header_id == 1:
+            return True
+        pos += 4 + data_size
+    return False
+
+def normalize_zip_for_compatibility(zip_path: str, log_callback=None):
+    """
+    ZIPファイルのサイズが大きな場合（例えば1.8GB以上）や追記によって
+    標準32bitヘッダとZip64拡張ヘッダが途中混在するキメラ構造になった場合、
+    またはパス区切りの異常がある場合に、全エントリを一貫したフォーマットへ自動正規化します。
+    """
+    if not os.path.exists(zip_path):
+        return
+
+    temp_path = f"{zip_path}.temp_normalize"
+    try:
+        size = os.path.getsize(zip_path)
+        # 1.8 GiB (1,932,735,283 bytes) 以上、またはパスセパレータ異常や途中混在キメラを検出した場合にリビルド
+        needs_normalize = (size > 1800 * 1024 * 1024)
+
+        if not needs_normalize:
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                has_std = False
+                has_zip64 = False
+                for info in zf.infolist():
+                    if '\\' in info.filename:
+                        needs_normalize = True
+                        break
+                    is_64 = (info.header_offset > 2147483647) or _has_zip64_extra(info.extra)
+                    if is_64:
+                        has_zip64 = True
+                    else:
+                        has_std = True
+                    if has_std and has_zip64:
+                        needs_normalize = True
+                        break
+
+        if not needs_normalize:
+            return
+
+        # 4 GiB (4,000,000,000 bytes) 未満であれば allowZip64=False を厳格に指定し、
+        # 前半が標準32bit・後半がZip64となるキメラ状態を完全に回避した純粋32bit書庫にする
+        use_zip64 = (size >= 4000 * 1024 * 1024)
+        if log_callback:
+            mode_str = "Zip64一貫モード" if use_zip64 else "純粋32bit一貫モード"
+            log_callback(f"ZIP書庫の正規化（キメラ構造防止・{mode_str}化）を実行します: {os.path.basename(zip_path)}", "INFO")
+
+        with zipfile.ZipFile(zip_path, 'r') as src_zip, \
+             zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_DEFLATED, allowZip64=use_zip64) as dst_zip:
+            for info in src_zip.infolist():
+                file_data = src_zip.read(info.filename)
+                new_filename = info.filename.replace('\\', '/')
+                new_info = zipfile.ZipInfo(filename=new_filename, date_time=info.date_time)
+                new_info.compress_type = info.compress_type
+                new_info.external_attr = info.external_attr
+                new_info.flag_bits = info.flag_bits
+                dst_zip.writestr(new_info, file_data)
+
+        os.replace(temp_path, zip_path)
+        if log_callback:
+            log_callback(f"ZIP書庫の正規化が正常に完了しました: {os.path.basename(zip_path)}", "INFO")
+    except Exception as e:
+        if log_callback:
+            log_callback(f"ZIP書庫の正規化中に警告: {e}", "WARNING")
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
 
 def append_to_zip(author_dir: str, zip_path: str, log_callback=None):
     """ディレクトリ内のファイルをZIPファイルの末尾に追加し、追加した元ファイルを削除します"""
@@ -27,14 +154,20 @@ def append_to_zip(author_dir: str, zip_path: str, log_callback=None):
         existing_names = set()
         if os.path.exists(zip_path):
             with zipfile.ZipFile(zip_path, 'r') as existing_zip:
-                existing_names = set(existing_zip.namelist())
+                existing_names = set(name.replace('\\', '/') for name in existing_zip.namelist())
+
+        # 4GB未満の書庫では allowZip64=False に設定し、追記による途中切り替えキメラ化を防ぐ
+        use_zip64 = False
+        if os.path.exists(zip_path) and os.path.getsize(zip_path) >= 4000 * 1024 * 1024:
+            use_zip64 = True
 
         # 'a' (Append) モードでZIPを開く。ファイルが無い場合は自動作成される。
-        with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
+        with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED, allowZip64=use_zip64) as zipf:
             for root, _, files in os.walk(author_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, author_dir)
+                    # パス区切り文字を必ずフォワードスラッシュに正規化して書き込む
+                    arcname = os.path.relpath(file_path, author_dir).replace('\\', '/')
                     if arcname in existing_names:
                         if log_callback:
                             log_callback(f"Zip内に同名ファイルが既に存在するためスキップします: {arcname}", "DEBUG")
@@ -46,6 +179,10 @@ def append_to_zip(author_dir: str, zip_path: str, log_callback=None):
         shutil.rmtree(author_dir)
         if log_callback:
             log_callback(f"Zip化が完了し、一時フォルダを削除しました。", "INFO")
+
+        # 追記後に、書庫サイズやキメラ化の有無を点検し、必要であれば自動正規化を実施
+        normalize_zip_for_compatibility(zip_path, log_callback)
+
     except Exception as e:
         if log_callback:
             log_callback(f"Zip化に失敗しました: {e}", "ERROR")
@@ -115,6 +252,21 @@ def verify_work_integrity(target_path: str, is_zip: bool = False, expected_page_
     return True, None
 
 def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = False, target_type: str = "both", log_callback=None, progress_callback=None, alert_callback=None, stop_event=None, pause_event=None, new_only: bool = False):
+    """作者(user_id)単位で排他制御しながらバックアップを実行する。
+
+    GUI手動実行・スケジューラ定期チェック・拡張機能連携キューが同じ作者を同時に処理し、
+    ZIPアーカイブへの同時書き込みで破損させることを防ぐため、実処理は _run_backup_impl に委譲し、
+    ここで作者単位のロックを取得する。
+    """
+    with get_user_lock(user_id):
+        return _run_backup_impl(
+            user_id, client, db, is_full=is_full, target_type=target_type,
+            log_callback=log_callback, progress_callback=progress_callback,
+            alert_callback=alert_callback, stop_event=stop_event, pause_event=pause_event,
+            new_only=new_only
+        )
+
+def _run_backup_impl(user_id: str, client: PixivClient, db: Database, is_full: bool = False, target_type: str = "both", log_callback=None, progress_callback=None, alert_callback=None, stop_event=None, pause_event=None, new_only: bool = False):
     logger = logging.getLogger(__name__)
     
     def log(msg, level="INFO"):
@@ -456,6 +608,7 @@ def run_backup(user_id: str, client: PixivClient, db: Database, is_full: bool = 
         if os.path.exists(zip_target_dir):
             log(f"Zip圧縮（追記）を実行します: {zip_target_path}")
             append_to_zip(zip_target_dir, zip_target_path, log_callback=log)
+            _verify_zip_and_notify(db, zip_target_path, zip_author_dir_name, log, alert)
 
     log(f"--- [結果サマリー] 〇新規: {stats['new_count']}件 | △更新: {stats['updated_count']}件 | ×削除検知: {stats['deleted_count']}件 | ↺復帰: {stats['restored_count']}件 | スキップ: {stats['skipped_count']}件 | エラー: {stats['failed_count']}件 ---")
     return stats
@@ -501,162 +654,172 @@ def run_single_work_backup(work_id: str, is_novel: bool, client: PixivClient, db
         return
         
     log(f"ダウンロード実行: {title}")
-    
-    base_img_dir = db.get_setting("save_path", "Images")
-    novel_save_format = db.get_setting("novel_save_format", "epub")
-    use_work_folder = db.get_setting("use_work_folder", "0") == "1"
-    
-    safe_title = sanitize_filename(title)
-    safe_user_name = sanitize_filename(user_name)
-    author_dir_name = f"{safe_user_name}({user_id})"
-    work_img_dir = os.path.join(base_img_dir, author_dir_name)
-    if use_work_folder:
-        work_folder_name = f"{safe_title[:30]}({work_id})"
-        work_img_dir = os.path.join(work_img_dir, work_folder_name)
-    os.makedirs(work_img_dir, exist_ok=True)
-    
-    try:
-        if is_novel:
-            novel_data = client.get_novel_text(work_id)
-            raw_content = novel_data.get('content', '')
-            
-            embedded_images = novel_data.get('textEmbeddedImages', {})
-            epub_embedded_images = []
-            txt_content = raw_content
-            html_content = raw_content
-            
-            if embedded_images:
-                novel_img_dir = os.path.join(work_img_dir, "images")
-                os.makedirs(novel_img_dir, exist_ok=True)
-                for img_id, img_info in embedded_images.items():
-                    original_url = img_info.get('urls', {}).get('original')
-                    if original_url:
-                        ext = os.path.splitext(original_url.split('?')[0])[1] or '.jpg'
-                        img_filename = f"{img_id}{ext}"
-                        save_path = os.path.join(novel_img_dir, img_filename)
-                        if not os.path.exists(save_path):
-                            client.download_image(original_url, save_path)
-                        txt_content = txt_content.replace(f"[uploadedimage:{img_id}]", f"[挿絵: images/{img_filename}]")
-                        html_content = html_content.replace(f"[uploadedimage:{img_id}]", f'<img src="../Images/{img_id}{ext}" alt="挿絵" />')
-                        epub_embedded_images.append({'id': img_id, 'path': save_path, 'ext': ext})
-            
-            txt_content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'\1《\2》', txt_content)
-            html_content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'<ruby>\1<rt>\2</rt></ruby>', html_content)
-            txt_content = txt_content.replace('[newpage]', '\n\n---\n\n')
-            html_content = html_content.replace('[newpage]', '<hr/>')
-            html_content = html_content.replace('\n', '<br/>\n')
-            
-            cover_image_path = None
-            cover_url = novel_data.get('coverUrl')
-            if cover_url:
-                novel_img_dir = os.path.join(work_img_dir, "images")
-                os.makedirs(novel_img_dir, exist_ok=True)
-                ext = os.path.splitext(cover_url.split('?')[0])[1] or '.jpg'
-                cover_save_path = os.path.join(novel_img_dir, f"cover_{work_id}{ext}")
-                if not os.path.exists(cover_save_path):
-                    client.download_image(cover_url, cover_save_path)
-                cover_image_path = cover_save_path
-            
-            if novel_save_format in ('epub', 'both'):
-                epub_name = f"{work_id}_{safe_title}.epub"
-                epub_path = os.path.join(work_img_dir, epub_name)
-                epub_builder.create_epub(
-                    output_path=epub_path,
-                    title=title,
-                    author=user_name,
-                    content_html=html_content,
-                    cover_image_path=cover_image_path,
-                    embedded_images=epub_embedded_images
-                )
-                log(f"小説のEPUB保存に成功しました: {epub_name}", "DEBUG")
-                
-            if novel_save_format in ('txt', 'both'):
-                txt_name = f"{work_id}_{safe_title}.txt"
-                txt_path = os.path.join(work_img_dir, txt_name)
-                with open(txt_path, 'w', encoding='utf-8-sig') as f:
-                    f.write(txt_content)
-                log(f"小説のTXT保存に成功しました: {txt_name}", "DEBUG")
-                
-            db.upsert_work(work_id, str(user_id), title, page_count, create_date, update_date, content_type='novel')
 
-            is_valid, reason = verify_work_integrity(epub_path if novel_save_format in ('epub', 'both') else txt_path)
-            if not is_valid:
-                log(f"品質チェック異常を検出しました (ID: {work_id}): {reason}", "WARNING")
-                db.add_failed_job(work_id, user_id, title, work_type, reason)
-            else:
-                db.remove_failed_job(work_id)
+    def _do_download_and_zip():
+        # GUI手動実行・スケジューラ・拡張機能連携キューが同じ作者を同時に処理し、
+        # ZIPアーカイブへの同時追記で破損させることを防ぐため、この関数全体を
+        # 作者(user_id)単位のロックで直列化する(呼び出し元で取得済み)。
+        nonlocal user_name
 
-        else:
-            img_urls = client.get_image_urls(work_id)
-            if not img_urls:
-                log(f"作品ID: {work_id} の画像URLが見つかりませんでした。", "WARNING")
-                return
+        base_img_dir = db.get_setting("save_path", "Images")
+        novel_save_format = db.get_setting("novel_save_format", "epub")
+        use_work_folder = db.get_setting("use_work_folder", "0") == "1"
 
-            saved_file_paths = []
-            for page_idx, img_url in enumerate(img_urls):
-                ext = os.path.splitext(img_url.split('?')[0])[1] or '.jpg'
-                if use_work_folder:
-                    filename = os.path.basename(img_url.split('?')[0])
+        safe_title = sanitize_filename(title)
+        safe_user_name = sanitize_filename(user_name)
+        author_dir_name = f"{safe_user_name}({user_id})"
+        work_img_dir = os.path.join(base_img_dir, author_dir_name)
+        if use_work_folder:
+            work_folder_name = f"{safe_title[:30]}({work_id})"
+            work_img_dir = os.path.join(work_img_dir, work_folder_name)
+        os.makedirs(work_img_dir, exist_ok=True)
+
+        try:
+            if is_novel:
+                novel_data = client.get_novel_text(work_id)
+                raw_content = novel_data.get('content', '')
+
+                embedded_images = novel_data.get('textEmbeddedImages', {})
+                epub_embedded_images = []
+                txt_content = raw_content
+                html_content = raw_content
+
+                if embedded_images:
+                    novel_img_dir = os.path.join(work_img_dir, "images")
+                    os.makedirs(novel_img_dir, exist_ok=True)
+                    for img_id, img_info in embedded_images.items():
+                        original_url = img_info.get('urls', {}).get('original')
+                        if original_url:
+                            ext = os.path.splitext(original_url.split('?')[0])[1] or '.jpg'
+                            img_filename = f"{img_id}{ext}"
+                            save_path = os.path.join(novel_img_dir, img_filename)
+                            if not os.path.exists(save_path):
+                                client.download_image(original_url, save_path)
+                            txt_content = txt_content.replace(f"[uploadedimage:{img_id}]", f"[挿絵: images/{img_filename}]")
+                            html_content = html_content.replace(f"[uploadedimage:{img_id}]", f'<img src="../Images/{img_id}{ext}" alt="挿絵" />')
+                            epub_embedded_images.append({'id': img_id, 'path': save_path, 'ext': ext})
+
+                txt_content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'\1《\2》', txt_content)
+                html_content = re.sub(r'\[\[rb:(.*?) > (.*?)\]\]', r'<ruby>\1<rt>\2</rt></ruby>', html_content)
+                txt_content = txt_content.replace('[newpage]', '\n\n---\n\n')
+                html_content = html_content.replace('[newpage]', '<hr/>')
+                html_content = html_content.replace('\n', '<br/>\n')
+
+                cover_image_path = None
+                cover_url = novel_data.get('coverUrl')
+                if cover_url:
+                    novel_img_dir = os.path.join(work_img_dir, "images")
+                    os.makedirs(novel_img_dir, exist_ok=True)
+                    ext = os.path.splitext(cover_url.split('?')[0])[1] or '.jpg'
+                    cover_save_path = os.path.join(novel_img_dir, f"cover_{work_id}{ext}")
+                    if not os.path.exists(cover_save_path):
+                        client.download_image(cover_url, cover_save_path)
+                    cover_image_path = cover_save_path
+
+                if novel_save_format in ('epub', 'both'):
+                    epub_name = f"{work_id}_{safe_title}.epub"
+                    epub_path = os.path.join(work_img_dir, epub_name)
+                    epub_builder.create_epub(
+                        output_path=epub_path,
+                        title=title,
+                        author=user_name,
+                        content_html=html_content,
+                        cover_image_path=cover_image_path,
+                        embedded_images=epub_embedded_images
+                    )
+                    log(f"小説のEPUB保存に成功しました: {epub_name}", "DEBUG")
+
+                if novel_save_format in ('txt', 'both'):
+                    txt_name = f"{work_id}_{safe_title}.txt"
+                    txt_path = os.path.join(work_img_dir, txt_name)
+                    with open(txt_path, 'w', encoding='utf-8-sig') as f:
+                        f.write(txt_content)
+                    log(f"小説のTXT保存に成功しました: {txt_name}", "DEBUG")
+
+                db.upsert_work(work_id, str(user_id), title, page_count, create_date, update_date, content_type='novel')
+
+                is_valid, reason = verify_work_integrity(epub_path if novel_save_format in ('epub', 'both') else txt_path)
+                if not is_valid:
+                    log(f"品質チェック異常を検出しました (ID: {work_id}): {reason}", "WARNING")
+                    db.add_failed_job(work_id, user_id, title, work_type, reason)
                 else:
-                    filename = f"{safe_title}{ext}" if len(img_urls) == 1 else f"{safe_title}_{page_idx + 1}{ext}"
-                save_path = os.path.join(work_img_dir, filename)
-                saved_file_paths.append(save_path)
+                    db.remove_failed_job(work_id)
 
-                if not os.path.exists(save_path):
-                    client.download_image(img_url, save_path)
-                    log(f"画像の保存に成功しました: {filename}", "DEBUG")
-
-            db.upsert_work(work_id, str(user_id), title, page_count, create_date, update_date, content_type='illust')
-
-            is_valid, reason = verify_work_integrity(work_img_dir, expected_page_count=page_count, file_paths=saved_file_paths)
-            if not is_valid:
-                log(f"品質チェック異常を検出しました (ID: {work_id}): {reason}", "WARNING")
-                db.add_failed_job(work_id, user_id, title, work_type, reason)
             else:
-                db.remove_failed_job(work_id)
+                img_urls = client.get_image_urls(work_id)
+                if not img_urls:
+                    log(f"作品ID: {work_id} の画像URLが見つかりませんでした。", "WARNING")
+                    return
 
-        log(f"作品の保存が完了しました: {title}")
-        
-        # Zip化はループ後に一括で行うため、ここでは何もしない
-                
-    except Exception as e:
-        db.add_failed_job(work_id, user_id if 'user_id' in locals() else '', title if 'title' in locals() else str(work_id), work_type if 'work_type' in locals() else 'illust', f"ダウンロードエラー: {str(e)}")
-        log(f"作品ID: {work_id} の処理中にエラーが発生しました: {e}", "ERROR")
+                saved_file_paths = []
+                for page_idx, img_url in enumerate(img_urls):
+                    ext = os.path.splitext(img_url.split('?')[0])[1] or '.jpg'
+                    if use_work_folder:
+                        filename = os.path.basename(img_url.split('?')[0])
+                    else:
+                        filename = f"{safe_title}{ext}" if len(img_urls) == 1 else f"{safe_title}_{page_idx + 1}{ext}"
+                    save_path = os.path.join(work_img_dir, filename)
+                    saved_file_paths.append(save_path)
 
-    # === ループ終了後 ===
-    # 既存フォルダのZIP化（または今回ダウンロードしたファイルのZIP化）を一括で行う
-    # まず、DBにユーザーが存在するか確認。存在しなければ追加。
-    
-    # ユーザー名を取得（存在しなければ作成。同時実行時の衝突を避けるためアトミックな操作を使用）
-    auto_archive = db.get_setting("auto_archive_new_users", "0") == "1"
-    try:
-        row, created = db.get_or_create_following_user(user_id, user_name, auto_archive)
-    except Exception as e:
-        log(f"following_users の登録/取得に失敗しました (ID: {user_id}): {e}", "ERROR")
-        row, created = None, False
+                    if not os.path.exists(save_path):
+                        client.download_image(img_url, save_path)
+                        log(f"画像の保存に成功しました: {filename}", "DEBUG")
 
-    override_zip = db.get_author_setting(user_id, "auto_archive", None)
-    if override_zip in ("1", "0"):
-        is_zipped = (override_zip == "1")
-    else:
-        is_zipped = bool(row['is_zipped']) if row else auto_archive
-    if row:
-        if user_name == 'Unknown':
-            user_name = row['name']
-        if created:
-            log(f"新規ユーザーをDBに登録しました: {row['name']} (ZIP化: {auto_archive})", "INFO")
+                db.upsert_work(work_id, str(user_id), title, page_count, create_date, update_date, content_type='illust')
 
-    safe_user_name = sanitize_filename(user_name)
-    author_dir_name = f"{safe_user_name}({user_id})"
+                is_valid, reason = verify_work_integrity(work_img_dir, expected_page_count=page_count, file_paths=saved_file_paths)
+                if not is_valid:
+                    log(f"品質チェック異常を検出しました (ID: {work_id}): {reason}", "WARNING")
+                    db.add_failed_job(work_id, user_id, title, work_type, reason)
+                else:
+                    db.remove_failed_job(work_id)
 
-    zip_all = db.get_setting("zip_all_after_download", "0") == "1"
+            log(f"作品の保存が完了しました: {title}")
 
-    if zip_all or is_zipped:
-        author_dir = os.path.join(base_img_dir, author_dir_name)
-        zip_target_path = os.path.join(base_img_dir, f"{author_dir_name}.zip")
-        if os.path.exists(author_dir):
-            log(f"Zip圧縮（既存フォルダの結合）を実行します: {zip_target_path}", "INFO")
-            append_to_zip(author_dir, zip_target_path, log_callback=log)
+            # Zip化はループ後に一括で行うため、ここでは何もしない
+
+        except Exception as e:
+            db.add_failed_job(work_id, user_id if 'user_id' in locals() else '', title if 'title' in locals() else str(work_id), work_type if 'work_type' in locals() else 'illust', f"ダウンロードエラー: {str(e)}")
+            log(f"作品ID: {work_id} の処理中にエラーが発生しました: {e}", "ERROR")
+
+        # === ループ終了後 ===
+        # 既存フォルダのZIP化（または今回ダウンロードしたファイルのZIP化）を一括で行う
+        # まず、DBにユーザーが存在するか確認。存在しなければ追加。
+
+        # ユーザー名を取得（存在しなければ作成。同時実行時の衝突を避けるためアトミックな操作を使用）
+        auto_archive = db.get_setting("auto_archive_new_users", "0") == "1"
+        try:
+            row, created = db.get_or_create_following_user(user_id, user_name, auto_archive)
+        except Exception as e:
+            log(f"following_users の登録/取得に失敗しました (ID: {user_id}): {e}", "ERROR")
+            row, created = None, False
+
+        override_zip = db.get_author_setting(user_id, "auto_archive", None)
+        if override_zip in ("1", "0"):
+            is_zipped = (override_zip == "1")
+        else:
+            is_zipped = bool(row['is_zipped']) if row else auto_archive
+        if row:
+            if user_name == 'Unknown':
+                user_name = row['name']
+            if created:
+                log(f"新規ユーザーをDBに登録しました: {row['name']} (ZIP化: {auto_archive})", "INFO")
+
+        safe_user_name = sanitize_filename(user_name)
+        author_dir_name = f"{safe_user_name}({user_id})"
+
+        zip_all = db.get_setting("zip_all_after_download", "0") == "1"
+
+        if zip_all or is_zipped:
+            author_dir = os.path.join(base_img_dir, author_dir_name)
+            zip_target_path = os.path.join(base_img_dir, f"{author_dir_name}.zip")
+            if os.path.exists(author_dir):
+                log(f"Zip圧縮（既存フォルダの結合）を実行します: {zip_target_path}", "INFO")
+                append_to_zip(author_dir, zip_target_path, log_callback=log)
+                _verify_zip_and_notify(db, zip_target_path, author_dir_name, log)
+
+    with get_user_lock(user_id):
+        _do_download_and_zip()
 
 def run_batch_backup(user_ids: list[str], client: PixivClient, db: Database, is_full: bool = False, target_type: str = "both",
                      log_callback=None, progress_callback=None, alert_callback=None,

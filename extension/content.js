@@ -277,3 +277,13 @@ injectNovelButton();
 if (window.location.pathname.includes('/following') || window.location.pathname.includes('/users/')) {
     injectUserButtons();
 }
+
+// ページロード時およびフォーカス時に自動Cookie同期をリクエスト
+function requestCookieSync() {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: "syncCookies" }).catch(() => {});
+    }
+}
+requestCookieSync();
+window.addEventListener('focus', requestCookieSync);
+
