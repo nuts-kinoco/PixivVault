@@ -204,6 +204,9 @@ def main_window(page: ft.Page):
         if not user_id:
             append_log("ユーザーIDを入力してください。", color=ft.Colors.ERROR)
             return
+        if not user_id.isdigit():
+            append_log("ユーザーIDは数字のみ入力してください (PixivのユーザーページURLの末尾の数字です)。", color=ft.Colors.ERROR)
+            return
         if not os.path.exists("cookies.txt"):
             handle_alert("cookies.txt が見つかりません。設定ボタンからインポートしてください。")
             return
@@ -260,6 +263,13 @@ def main_window(page: ft.Page):
         margin=ft.margin.Margin(left=-10, top=5, right=0, bottom=0)
     )
 
+    batch_summary_card = None  # 後の行で実体を代入する
+
+    def hide_batch_summary(e=None):
+        if batch_summary_card is not None and batch_summary_card.visible:
+            batch_summary_card.visible = False
+            page.update()
+
     batch_target_type_dropdown = ft.Dropdown(
         label="対象", width=160,
         options=[
@@ -269,9 +279,11 @@ def main_window(page: ft.Page):
         ],
         value="both"
     )
+    batch_target_type_dropdown.on_change = lambda e: hide_batch_summary()
     
 
     def clear_search_field(e):
+        hide_batch_summary()
         search_field.value = ""
         search_field.update()
         load_follow_list_ui(search_val_override="")
@@ -307,8 +319,8 @@ def main_window(page: ft.Page):
         ],
         value="asc"
     )
-    sort_by_dropdown.on_select    = lambda e: load_follow_list_ui()
-    sort_order_dropdown.on_select = lambda e: load_follow_list_ui()
+    sort_by_dropdown.on_select    = lambda e: (hide_batch_summary(), load_follow_list_ui())
+    sort_order_dropdown.on_select = lambda e: (hide_batch_summary(), load_follow_list_ui())
 
     batch_run_btn    = ft.ElevatedButton("一括ダウンロード実行", icon=ft.Icons.PLAY_ARROW)
     batch_pause_btn  = ft.ElevatedButton("一時停止", icon=ft.Icons.PAUSE, disabled=True)
@@ -336,8 +348,6 @@ def main_window(page: ft.Page):
             users = [u for u in users if search_q in (u.get('name') or '').lower() or search_q in str(u.get('user_id', '')).lower()]
         
         follow_count_text.value = str(len(users))
-        
-        append_log(f"[システム] リスト更新: 検索='{search_q}', 件数={len(users)}")
 
         def toggle_zip(e, uid):
             btn = e.control
@@ -363,10 +373,14 @@ def main_window(page: ft.Page):
                 label += f" [最終: {u['last_downloaded'][:10]}]"
                 
             # 退避しておいた選択状態を復元（デフォルトは False）
-            cb = ft.Checkbox(value=saved_states.get(u['user_id'], False))
+            cb = ft.Checkbox(
+                value=saved_states.get(u['user_id'], False),
+                on_change=lambda e: hide_batch_summary()
+            )
             follow_checkboxes[u['user_id']] = cb
             
             def on_label_tap(e, cb_ref=cb):
+                hide_batch_summary()
                 cb_ref.value = not cb_ref.value
                 page.update()
                 
@@ -467,7 +481,7 @@ def main_window(page: ft.Page):
         follow_list_view.update()
         page.update()
         
-    search_field.on_change  = lambda e: load_follow_list_ui(search_val_override=e.control.value)
+    search_field.on_change  = lambda e: (hide_batch_summary(), load_follow_list_ui(search_val_override=e.control.value))
 
     def set_ui_disabled_batch(disabled: bool, is_running: bool = False):
         batch_run_btn.disabled    = disabled
@@ -520,10 +534,18 @@ def main_window(page: ft.Page):
     batch_summary_text = ft.Row(spacing=10, wrap=True)
     batch_summary_card = ft.Container(
         content=ft.Row([
-            ft.Icon(ft.Icons.ANALYTICS, color=ft.Colors.BLUE_400),
-            ft.Text("実行結果サマリー: ", weight=ft.FontWeight.BOLD),
-            batch_summary_text
-        ], wrap=True),
+            ft.Row([
+                ft.Icon(ft.Icons.ANALYTICS, color=ft.Colors.BLUE_400),
+                ft.Text("実行結果サマリー: ", weight=ft.FontWeight.BOLD),
+                batch_summary_text
+            ], spacing=10, wrap=True, expand=True),
+            ft.IconButton(
+                icon=ft.Icons.CLOSE,
+                icon_size=18,
+                tooltip="サマリーを閉じる",
+                on_click=hide_batch_summary
+            )
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         bgcolor=ft.Colors.SURFACE_CONTAINER,
         padding=10,
         border_radius=8,
@@ -600,10 +622,11 @@ def main_window(page: ft.Page):
 
     batch_pause_btn.on_click = on_batch_pause
     batch_stop_btn.on_click  = lambda _: batch_stop_event.set()
-    select_all_btn.on_click   = lambda _: [setattr(cb, 'value', True) for cb in follow_checkboxes.values()] or page.update()
-    deselect_all_btn.on_click = lambda _: [setattr(cb, 'value', False) for cb in follow_checkboxes.values()] or page.update()
+    select_all_btn.on_click   = lambda _: hide_batch_summary() or [setattr(cb, 'value', True) for cb in follow_checkboxes.values()] or page.update()
+    deselect_all_btn.on_click = lambda _: hide_batch_summary() or [setattr(cb, 'value', False) for cb in follow_checkboxes.values()] or page.update()
     
     def on_select_favorite(e):
+        hide_batch_summary()
         favs = [str(u['user_id']) for u in db.get_favorite_users()]
         for uid, cb in follow_checkboxes.items():
             cb.value = str(uid) in favs
@@ -690,7 +713,7 @@ def main_window(page: ft.Page):
                 cookie_status_text.value = "[完了] cookies.txt をインポートしました。"
                 cookie_status_text.color = get_adjusted_color(ft.Colors.GREEN_400)
                 cookie_status_text.visible = True
-                threading.Thread(target=check_login_status, daemon=True).start()
+                threading.Thread(target=lambda: check_login_status(on_cookie_imported=True), daemon=True).start()
             else:
                 cookie_status_text.value = "キャンセルされました。"
                 cookie_status_text.color = get_adjusted_color(ft.Colors.GREY_400)
@@ -698,8 +721,61 @@ def main_window(page: ft.Page):
         except Exception as ex:
             cookie_status_text.value = f"[失敗] {ex}"
             cookie_status_text.color = ft.Colors.RED_400
-            cookie_status_text.visible = True
         page.update()
+
+    def _run_auto_browser_cookie_picker():
+        """Cookie更新ボタン押下時の処理: ブラウザからの自動抽出を試み、失敗時は既存のcookies.txtの有効性をチェックしてフォールバック"""
+        try:
+            login_status_text.value = "⏳ Cookie を確認中..."
+            login_status_text.color = ft.Colors.BLUE_400
+            cookie_status_text.value = "[確認中] Cookie の状態をチェック中..."
+            cookie_status_text.color = ft.Colors.BLUE_400
+            cookie_status_text.visible = True
+            page.update()
+
+            status_info = PixivClient.auto_extract_browser_cookies("cookies.txt")
+            st = status_info.get("status", "expired")
+            msg = status_info.get("message", "")
+            browser_used = status_info.get("browser", "")
+
+            if st in ["valid", "warning_yellow", "warning_red"]:
+                # パターンA: ブラウザから新しい Cookie の抽出・更新に成功
+                cookie_status_text.value = f"[更新完了] {msg}"
+                cookie_status_text.color = get_adjusted_color(ft.Colors.GREEN_400) if st == "valid" else ft.Colors.YELLOW_400
+                append_log(f"[Cookie更新] ブラウザ ({browser_used}) から最新の Cookie を取得しました。 ({msg})", color=ft.Colors.GREEN_400)
+                page.show_dialog(ft.SnackBar(ft.Text(f"✓ Cookie をブラウザ ({browser_used}) から更新しました！"), bgcolor=ft.Colors.GREEN_700))
+                threading.Thread(target=lambda: check_login_status(on_cookie_imported=True), daemon=True).start()
+            else:
+                # パターンB: ブラウザからの直接抽出は不可だったが、既存の cookies.txt が有効かチェック
+                fallback_info = PixivClient.check_cookie_status("cookies.txt")
+                fb_st = fallback_info.get("status", "expired")
+                fb_msg = fallback_info.get("message", "")
+
+                if fb_st in ["valid", "warning_yellow", "warning_red"]:
+                    # 既存のCookieが有効 → ユーザーに混乱を与えずシンプルに「有効」と伝える
+                    cookie_status_text.value = f"[有効] {fb_msg}"
+                    cookie_status_text.color = get_adjusted_color(ft.Colors.GREEN_400) if fb_st == "valid" else ft.Colors.YELLOW_400
+                    append_log(f"[Cookie確認] Cookie は有効です。 ({fb_msg})", color=ft.Colors.GREEN_400)
+                    page.show_dialog(ft.SnackBar(ft.Text("✓ Cookie は有効です！"), bgcolor=ft.Colors.GREEN_700))
+                    threading.Thread(target=lambda: check_login_status(on_cookie_imported=False, auto_retried=True), daemon=True).start()
+                else:
+                    # パターンC: 本当にCookieが存在しない・期限切れの場合のみエラー表示
+                    login_status_text.value = "× Cookie が無効または未設定です"
+                    login_status_text.color = ft.Colors.RED_400
+                    cookie_status_text.value = "[未設定] 有効な Cookie がありません"
+                    cookie_status_text.color = ft.Colors.RED_400
+                    append_log("[Cookie未設定] 有効な Cookie が見つかりません。拡張機能タブから cookies.txt を読み込むか、Pixiv にログインしたブラウザで再度お試しください。", color=ft.Colors.RED_400)
+                    handle_alert("【Cookie が見つかりません】\n有効なログイン Cookie がありません。\n\n対処方法:\n① 右上の [拡張機能] タブから cookies.txt を読み込む\n② Pixiv にログインしたブラウザで Cookie更新ボタンを再度押す")
+        except Exception as ex:
+            login_status_text.value = "× Cookie 確認中にエラーが発生しました"
+            login_status_text.color = ft.Colors.RED_400
+            cookie_status_text.value = f"[エラー] {ex}"
+            cookie_status_text.color = ft.Colors.RED_400
+            append_log(f"[Cookie更新エラー] {ex}", color=ft.Colors.RED_400)
+            handle_alert(f"【Cookie更新エラー】\n予期せぬエラーが発生しました:\n{ex}")
+        cookie_status_text.visible = True
+        page.update()
+
 
     def _run_folder_picker():
         """保存先フォルダー選択ダイアログをバックグラウンドスレッドで実行"""
@@ -786,7 +862,7 @@ def main_window(page: ft.Page):
     auto_check_dropdown.on_change = on_auto_check_interval_change
 
     def on_enable_notifications_change(e):
-        db.set_setting("enable_notifications", "1" if e.control.value == "1" else "0")
+        db.set_setting("enable_notifications", e.control.value)
 
     notifications_dropdown = ft.Dropdown(
         label="新着通知のON/OFF",
@@ -1028,6 +1104,12 @@ def main_window(page: ft.Page):
     settings_btn = ft.IconButton(
         icon=ft.Icons.SETTINGS, tooltip="設定",
         on_click=open_settings_dialog
+    )
+
+    cookie_picker_btn = ft.IconButton(
+        icon=ft.Icons.PUBLIC,
+        tooltip="Cookie更新 (ブラウザから最新Cookieを抽出・または既存Cookieを再検証)",
+        on_click=lambda _: threading.Thread(target=_run_auto_browser_cookie_picker, daemon=True).start()
     )
 
     # --- 拡張機能タブ ---
@@ -1812,10 +1894,12 @@ def main_window(page: ft.Page):
     page.add(
         ft.Row([
             ft.Column([
-                ft.Text("PixivVault", size=32, weight=ft.FontWeight.BOLD),
+                ft.Row([
+                    ft.Text("PixivVault", size=32, weight=ft.FontWeight.BOLD),
+                ]),
                 login_status_text,
             ]),
-            ft.Row([history_btn, open_folder_btn, theme_toggle_btn, settings_btn], spacing=5)
+            ft.Row([history_btn, open_folder_btn, theme_toggle_btn, cookie_picker_btn, settings_btn], spacing=5)
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         custom_tab_bar,
         tab1_container,
@@ -1855,27 +1939,61 @@ def main_window(page: ft.Page):
             append_log("起動時フォローリスト自動同期を開始します...", color=ft.Colors.BLUE_300)
             threading.Thread(target=run_auto_sync_thread, args=(my_id,), daemon=True).start()
 
-    def check_login_status():
+    def check_login_status(on_cookie_imported=False, auto_retried=False):
+        old_user_id = db.get_setting("my_user_id", "")
         status_info = PixivClient.check_cookie_status("cookies.txt")
         st = status_info.get("status", "expired")
         msg = status_info.get("message", "")
         uid = status_info.get("user_id")
+        days_left = status_info.get("days_left", 0)
+
+        # 起動時など、期限切れや1週間以下(黄色・赤色)でまだ自動更新試行していなければ、裏で全自動抽出にトライ！
+        if (st == "expired" or st in ["warning_yellow", "warning_red", "warning"]) and not on_cookie_imported and not auto_retried:
+            append_log("Cookie有効期限チェック: ブラウザ (Chrome/Edge/Firefox) から最新Cookieの全自動抽出を試行します...", color=ft.Colors.BLUE_300)
+            try:
+                auto_info = PixivClient.auto_extract_browser_cookies("cookies.txt")
+                auto_st = auto_info.get("status", "expired")
+                if auto_st in ["valid", "warning_yellow", "warning_red"]:
+                    status_info = auto_info
+                    st = auto_st
+                    msg = auto_info.get("message", "")
+                    uid = auto_info.get("user_id")
+                    days_left = auto_info.get("days_left", 0)
+                    append_log(f"ブラウザ ({auto_info.get('browser')}) からの Cookie 自動抽出・更新に成功しました！", color=ft.Colors.GREEN_400)
+                    on_cookie_imported = True
+                else:
+                    append_log("ブラウザからの自動抽出を試みましたが、有効なセッションが見つかりませんでした。ブラウザでPixivへログイン後、右上地球アイコンの「Cookie更新」ボタンを押してください。", color=ft.Colors.ON_SURFACE_VARIANT)
+            except Exception as ex:
+                logger.debug(f"自動抽出エラー: {ex}")
 
         if st == "valid":
             login_status_text.value = f"● [有効] {msg}"
             login_status_text.color = ft.Colors.GREEN_400
-            if uid:
-                db.set_setting("my_user_id", str(uid))
-                trigger_auto_sync(uid)
-        elif st == "warning":
-            login_status_text.value = f"▲ [期限切れ間近] {msg}"
-            login_status_text.color = ft.Colors.ERROR
-            if uid:
-                db.set_setting("my_user_id", str(uid))
-                trigger_auto_sync(uid)
+        elif st == "warning_yellow":
+            login_status_text.value = f"▲ [注意/残り1週間以内] {msg}"
+            login_status_text.color = ft.Colors.YELLOW_400
+        elif st in ["warning", "warning_red"]:
+            login_status_text.value = f"▲ [警告/残り3日以内] {msg}"
+            login_status_text.color = ft.Colors.RED_400
         else:
             login_status_text.value = f"× [未認証/期限切れ] {msg}"
             login_status_text.color = ft.Colors.RED_400
+
+        if uid and st in ["valid", "warning_yellow", "warning_red", "warning"]:
+            if str(uid) != str(old_user_id) and str(old_user_id) != "":
+                # 別アカウントのCookieに切り替わった場合のみ全削除・再同期
+                append_log(f"別アカウント(ID: {uid})のCookieを読み込みました。旧フォロー中データを削除・再取得します。", color=ft.Colors.ORANGE_400)
+                db.clear_following_users()
+                db.set_setting("my_user_id", str(uid))
+                threading.Thread(target=sync_follow_list, daemon=True).start()
+            elif on_cookie_imported:
+                # 同アカウントのCookie更新・確認時は全削除せずに差分同期のみ行う
+                append_log("Cookie を確認・更新しました。", color=ft.Colors.GREEN_400)
+                db.set_setting("my_user_id", str(uid))
+                trigger_auto_sync(uid)
+            else:
+                db.set_setting("my_user_id", str(uid))
+                trigger_auto_sync(uid)
         page.update()
 
     # 初期化
