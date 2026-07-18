@@ -13,9 +13,11 @@ def create_image():
     icon_path = get_asset_path("icon.png")
     if os.path.exists(icon_path):
         try:
-            return Image.open(icon_path)
+            with Image.open(icon_path) as img:
+                return img.copy()  # ファイルハンドルを即座に閉じるためcopy()で返す
         except Exception:
             pass
+
     
     # フォールバック: ダミーの青い正方形（簡易的なダミーアイコン）
     image = Image.new('RGB', (64, 64), color = (52, 152, 219))

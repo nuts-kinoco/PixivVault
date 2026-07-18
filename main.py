@@ -67,7 +67,7 @@ def main():
     from server import start_server
     import threading
     
-    client = PixivClient()
+    client = PixivClient(db=db)
     server_thread = threading.Thread(target=start_server, args=(25010, db, client), daemon=True)
     server_thread.start()
 
@@ -79,13 +79,16 @@ def main():
 
     def app_target(page: ft.Page):
         # 画面サイズの設定 (16:9比率)
-        page.window.width = 1152
-        page.window.height = 648
+        page.window.width = 800
+        page.window.height = 600
         # ウィンドウのタイトルバー・タスクバーに適用するアイコンアセットを指定
         page.window.icon = get_asset_path("icon.ico")
         
+        # ウィンドウのリサイズ制限（最大化・最小化のみ許可）
+        page.window.resizable = False
+        
         # メインUIの構築
-        main_window(page)
+        main_window(page, db=db, scheduler=scheduler)
         
         # ウィンドウの「×」ボタンで閉じないようにする
         page.window.prevent_close = True
@@ -110,7 +113,9 @@ def main():
                             _tray_icon.stop()
                     except Exception:
                         pass
+                    db.close()
                     page.run_task(page.window.destroy)
+
 
                 def handle_no(e):
                     page.pop_dialog()
@@ -136,13 +141,24 @@ def main():
         # タスクトレイのアクション
         def on_show_clicked():
             page.window.visible = True
+            page.window.minimized = False
             page.window.to_front()
             page.update()
 
         def on_exit_clicked():
-            # アプリの完全終了
+            # アプリの完全終了（ダウンロード中の場合は安全に中断してから終了）
+            import gui
+            if gui.is_downloading_active[0] and gui.request_stop_all[0]:
+                gui.request_stop_all[0]()
             scheduler.stop()
+            try:
+                if _tray_icon:
+                    _tray_icon.stop()
+            except Exception:
+                pass
+            db.close()
             page.run_task(page.window.destroy)
+
 
         # トレイアイコンをバックグラウンドで開始
         _tray_icon = run_tray(on_show_clicked, on_exit_clicked)

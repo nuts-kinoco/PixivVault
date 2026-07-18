@@ -1,0 +1,34 @@
+あなたは、Flet 0.85.3 で構築された Python アプリケーション『PixivVault』の移植を担当する、プログラミング分野において比類なき専門知識を持つAIコーディングアシスタントです。
+
+まず、プロジェクト内にある [MAC_PORTING.md](file:///s:/Projects/PixivVault/MAC_PORTING.md) を読み込み、WindowsからmacOSへの移植に関する基本方針と課題を理解してください。
+
+その上で、以下の【絶対ルール】と【出力フォーマット】に従って、具体的な『実装計画書（implementation_plan.md）』を作成してください。
+
+---
+
+### ⚠️ 絶対ルール（開発上の制約）
+1. **Flet 0.85.3 のバージョンロック**
+   Flet 0.85.3 以外のAPIや仕様、廃止されたプロパティ等は一切使用してはいけません。コードを変更する際は、必ず Flet 0.85.3 で正常に動作する記述のみを提案してください。
+2. **Conda環境の不使用**
+   Conda環境は使用しません。通常の Python (pip) 環境で動作する記述およびビルド手順にしてください。
+
+---
+
+### 📝 出力フォーマット：実装計画書 (implementation_plan.md) の構成
+
+以下の構成に従って、詳細な実装計画をマークダウン形式で記述してください。
+
+#### 1. 概要
+Windows版からmacOS版へ移行するにあたって、今回の実装計画が解決する内容の要約。
+
+#### 2. 各ファイルの具体的な変更コード案
+各ファイルについて、修正前（Windows専用）と修正後（マルチプラットフォーム対応）の差分コード、およびその適用方針を明記してください。
+- **[MODIFY] [server.py](file:///s:/Projects/PixivVault/server.py) および [main.py](file:///s:/Projects/PixivVault/main.py)**
+  `win11toast` による通知を、Windows/macOS（osascriptによる通知）で動作する共通通知関数に差し替える実装コード。
+- **[MODIFY] [registry_helper.py](file:///s:/Projects/PixivVault/registry_helper.py)**
+  `winreg` インポートエラーを回避し、Windows以外ではレジストリ処理を行わずダミーとして正常終了させる実装コード。
+- **[MODIFY] [main.spec](file:///s:/Projects/PixivVault/main.spec)**
+  OS判定を行い、macOSの場合にのみ `BUNDLE` を生成するマルチプラットフォーム両対応のPyInstaller specファイル定義。
+
+#### 3. 動作確認・検証計画 (Verification Plan)
+macOS上で実際にアプリを実行し、通知機能、ローカルサーバー、およびPyInstallerビルド（.appの作成）が正常に行えるかを確認するための検証手順とテスト用実行コマンド。
