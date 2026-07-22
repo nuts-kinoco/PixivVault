@@ -78,6 +78,9 @@ request_stop_all = [None]
 # server.py（拡張機能連携）からもダウンロード中フラグを正しく管理できるようにするためのフック。
 # gui.py 内の GUI 発のフローと合算して is_downloading_active を管理する。
 gui_set_flow_active = [None]
+# server.py（natsukino.com/iOS版連携）が認証済みアクセスを検知するたびに呼ぶフック。
+# 引数は time.time() のタイムスタンプ。ヘッダの接続インジケータ表示に使う。
+gui_set_app_connected = [None]
 
 
 def main_window(page: ft.Page, db: Database = None, scheduler=None):
@@ -162,8 +165,8 @@ def main_window(page: ft.Page, db: Database = None, scheduler=None):
         if len(log_area.controls) > 1000:
             del log_area.controls[0]
         page.update()
-    def handle_log(msg: str):
-        append_log(msg)
+    def handle_log(msg: str, color: str = ft.Colors.ON_SURFACE):
+        append_log(msg, color=color)
     def handle_alert(msg: str):
         append_log(f"[!] {msg}", color=ft.Colors.RED_400)
     
@@ -172,6 +175,48 @@ def main_window(page: ft.Page, db: Database = None, scheduler=None):
         scheduler.log_callback = append_log
 
     login_status_text = ft.Text("ログインチェック中...", color=ft.Colors.PRIMARY, size=13, weight=ft.FontWeight.W_500)
+
+    # ── natsukino.com/iOS版 接続インジケータ ──────────────────────────────
+    # server.py が認証済みアクセス(/ping・ダウンロード命令等)を検知するたびに
+    # gui_set_app_connected 経由で最終接続時刻が届く。直近60秒以内なら「接続中」、
+    # それ以外は最終接続からの経過時間を表示する。10秒ごとのティッカーで自然に
+    # 「未接続」へ減衰させる（HTTPはステートレスなので明示的な切断通知は無い）。
+    _last_app_contact_holder = [None]
+    app_connection_icon = ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.ON_SURFACE_VARIANT, size=10)
+    app_connection_text = ft.Text("アプリ: 未接続", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+
+    def _refresh_app_connection_label():
+        last = _last_app_contact_holder[0]
+        if last is None:
+            icon_color, label = ft.Colors.ON_SURFACE_VARIANT, "アプリ: 未接続"
+        else:
+            elapsed = time.time() - last
+            if elapsed < 60:
+                icon_color, label = ft.Colors.GREEN_400, "アプリ: 接続中"
+            else:
+                mins = int(elapsed // 60)
+                icon_color = ft.Colors.ON_SURFACE_VARIANT
+                label = f"アプリ: 未接続（最終接続 {mins}分前）" if mins > 0 else "アプリ: 未接続（最終接続 1分未満前）"
+        try:
+            app_connection_icon.color = icon_color
+            app_connection_text.value = label
+            app_connection_text.color = icon_color
+            page.update()
+        except Exception:
+            pass
+
+    def _on_app_connected(timestamp):
+        _last_app_contact_holder[0] = timestamp
+        _refresh_app_connection_label()
+
+    gui_set_app_connected[0] = _on_app_connected
+
+    def _app_connection_ticker():
+        while True:
+            time.sleep(10)
+            _refresh_app_connection_label()
+
+    threading.Thread(target=_app_connection_ticker, daemon=True).start()
 
     def clear_user_id_field(e):
         user_id_field.value = ""
@@ -1168,7 +1213,7 @@ def main_window(page: ft.Page, db: Database = None, scheduler=None):
             advanced_settings,
 
             ft.Row([
-                ft.Text("v3.0 build260718", size=11, color=ft.Colors.GREY_600)
+                ft.Text("v3.0 build260719", size=11, color=ft.Colors.GREY_600)
             ], alignment=ft.MainAxisAlignment.CENTER),
             ft.Row([
                 ft.TextButton("閉じる", on_click=on_settings_close)
@@ -2158,6 +2203,7 @@ def main_window(page: ft.Page, db: Database = None, scheduler=None):
                     ft.Text("PixivVault", size=32, weight=ft.FontWeight.BOLD),
                 ]),
                 login_status_text,
+                ft.Row([app_connection_icon, app_connection_text], spacing=6),
             ]),
             ft.Row([history_btn, open_folder_btn, theme_toggle_btn, cookie_picker_btn, settings_btn], spacing=5)
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
